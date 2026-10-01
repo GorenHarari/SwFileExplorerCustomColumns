@@ -53,7 +53,7 @@ namespace SwPropertyHandler
         // Computed per-instance from this file's actual custom properties.
         private List<KeyValuePair<string, PROPERTYKEY>> _autoMatched = new List<KeyValuePair<string, PROPERTYKEY>>();
 
-        private ISwDMDocument25 _doc;
+        private ISwDMDocument23 _doc;
 
         public void Initialize(string pszFilePath, uint grfMode)
         {
@@ -233,7 +233,7 @@ namespace SwPropertyHandler
         // owns, and anything fields.json already claims under our own
         // schema, so nothing is ever reported under two PROPERTYKEYs.
         private static List<KeyValuePair<string, PROPERTYKEY>> ComputeAutoMatches(
-            ISwDMDocument25 doc, List<KeyValuePair<string, int>> fields)
+            ISwDMDocument23 doc, List<KeyValuePair<string, int>> fields)
         {
             var result = new List<KeyValuePair<string, PROPERTYKEY>>();
             if (doc == null)
@@ -287,7 +287,7 @@ namespace SwPropertyHandler
             return result;
         }
 
-        private static ISwDMDocument25 TryOpenDocument(string filePath)
+        private static ISwDMDocument23 TryOpenDocument(string filePath)
         {
             try
             {
@@ -318,7 +318,7 @@ namespace SwPropertyHandler
                 }
 
                 ISwDMDocument doc = app.GetDocument(filePath, docType, true, out SwDmDocumentOpenError _);
-                return doc as ISwDMDocument25;
+                return doc as ISwDMDocument23;
             }
             catch
             {
