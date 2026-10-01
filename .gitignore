@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+
+# Secret: SolidWorks Document Manager API license key
+SwDmLicenseKey.md

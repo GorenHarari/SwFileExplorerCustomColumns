@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Matches sldsearchifilter.dll: it's a 64-bit COM component, so this
+         process must be x64 too, and net48 keeps COM interop simple. -->
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SwFilterDump</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Drives the registered Windows IFilter (sldsearchifilter.dll for .sldprt/.sldasm/.slddrw)
+       directly via the raw COM interop in NativeMethods.cs (vendored from IFilterTextReader) -
+       the same mechanism Windows Search uses - and prints every chunk it emits, so we can see
+       exactly what SolidWorks' filter extracts instead of guessing from names. -->
+
+</Project>

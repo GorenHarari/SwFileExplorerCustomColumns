@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- .NET Framework 4.8 is the safest target for SolidWorks COM interop.
+         If you'd rather use modern .NET (6/7/8), this can be switched later -
+         let's get it working on net48 first. -->
+    <TargetFramework>net48</TargetFramework>
+    <!-- SolidWorks (2020+) is 64-bit only, so this must build as x64, not AnyCPU. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      This is a COM interop DLL that ships with your SolidWorks install - it is
+      NOT a NuGet package, so we reference the local file directly.
+
+      FIX THIS PATH to wherever it actually is on your machine. Common locations:
+        C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\swdocumentmgr\SolidWorks.Interop.swdocumentmgr.dll
+        C:\Program Files\Common Files\SOLIDWORKS Shared\swdocumentmgr\SolidWorks.Interop.swdocumentmgr.dll
+
+      If you're not sure, search your C: drive (File Explorer search, or
+      `dir /s /b C:\SolidWorks.Interop.swdocumentmgr.dll` in cmd) for the file
+      name and paste the real path in below.
+    -->
+    <Reference Include="SolidWorks.Interop.swdocumentmgr">
+      <HintPath>C:\Program Files\Common Files\SOLIDWORKS Shared\SolidWorks.Interop.swdocumentmgr.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+
+</Project>
