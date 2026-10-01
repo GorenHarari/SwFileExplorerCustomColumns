@@ -372,17 +372,20 @@ further down, this section just records the reasoning (several were settled
 by checking the real `solidworksproperties.propdesc` file or this machine's
 actual registry instead of guessing):
 
-1. **PROPERTYKEY stability - resolved.** Checked the real
-   `solidworksproperties.propdesc` rather than inventing a scheme: SolidWorks
-   uses **one shared FMTID** for its entire schema
+1. **PROPERTYKEY stability - resolved, later simplified in Phase 0.**
+   Checked the real `solidworksproperties.propdesc` rather than inventing a
+   scheme: SolidWorks uses **one shared FMTID** for its entire schema
    (`{6A9EEB69-672C-4B73-B1F3-A6EF662CF3C2}`) with a plain incrementing
    `propID` per property (100, 101, 102...). We do the same: one FMTID
-   generated once for our schema, plus a persisted, append-only name->PID
-   registry (a field's PID is assigned once and never reused, even after
-   the field is removed) so Explorer's saved per-folder column layouts
-   (keyed by the full `{FMTID, PID}` pair) can never silently collide with
-   a different property later. This is also why two Explorer columns can
-   both be labeled "Description" with no conflict (SolidWorks's own vs.
+   generated once for our schema, plus a name->PID assignment per field so
+   Explorer's saved per-folder column layouts (keyed by the full
+   `{FMTID, PID}` pair) don't collide across different properties. Original
+   plan kept retired PIDs reserved forever via a separate append-only
+   registry file; collapsed in Phase 0 to a single `fields.json` instead,
+   accepting a narrow residual risk instead (see Phase 0 below) - judged
+   low-severity enough not to justify the second file. This is also why two
+   Explorer columns can both be labeled "Description" with no conflict
+   (SolidWorks's own vs.
    Windows' generic one) - identity is the key pair, not the label.
 2. **Field name vs. schema identifier vs. display label - resolved.**
    SolidWorks's own schema sidesteps this by hand-writing fixed XML: no
@@ -473,36 +476,61 @@ actual registry instead of guessing):
     if it doesn't hold, the fallback is simply documenting that Explorer
     windows need to be reopened after Apply.
 
-### Phase 0 - shared config format
-Two small files, not one, both machine-wide under
-`%ProgramData%\SwFileExplorerCustomColumns\`, since both an unprivileged GUI
-and a shell-loaded COM component need to read them:
-- `fields.json` - the editable list (Phase 1's GUI only ever touches this):
-  the tracked SolidWorks custom-property names (e.g. `Material`, `Weight`,
-  `Thickness`, `Project`), entered as free text, auto-sanitized for the
-  schema identifier (see item 2 above).
-- `fieldRegistry.json` - append-only, owned by the Apply tool (Phase 2):
-  persists the name -> PID mapping under our one shared FMTID (see item 1
-  above). Entries are never removed, even when a field drops out of
-  `fields.json`, so a re-added field gets its old identity back
-  automatically.
-- **Tests to pass before Phase 1:** both formats are fixed (JSON); a
-  hand-written example of each parses correctly in a throwaway read-back
-  test; no code depends on either file existing yet, so this phase just
-  needs the formats nailed down and one round-trip proven for each.
+### Phase 0 - shared config format (done, tested)
+One file, `%ProgramData%\SwFileExplorerCustomColumns\fields.json`, both an
+unprivileged GUI (Phase 1) and a shell-loaded COM component (Phase 3) need
+to read. Originally planned as two files (an editable list plus a separate
+append-only name->PID registry), collapsed to one on review: easier to
+hand-edit, and "behind the scenes, 1 file or 10 doesn't matter" - the
+two-file split only existed to guarantee a removed field's PID is never
+reused. Decided the simpler one-file model is worth the narrow residual
+risk that entails (see item 1 below).
+
+Flat JSON object, name -> PID, under our one shared FMTID (item 1 above):
+```json
+{
+  "Material": 100,
+  "Weight": 101,
+  "Thickness": 102,
+  "Project": 103
+}
+```
+- The object's keys *are* the active field list - no separate list to keep
+  in sync.
+- Adding a field: compute `max(existing values, default 99) + 1`, add the
+  key with that PID.
+- Removing a field: delete the key outright. **Accepted tradeoff:** since
+  PIDs aren't retired, if the removed field held the current max PID, a
+  later new field can be assigned that same number. Residual impact judged
+  low-severity: a PROPERTYKEY's label/value always resolves from the
+  *current* schema, not a cached one, so an old Explorer folder view that
+  had that column enabled would just start showing the new field's data
+  under that slot (a cosmetic surprise, not wrong/corrupted data) rather
+  than anything breaking.
+- Names are stored as free text (e.g. "Part Number" is fine) - sanitizing
+  into a valid schema identifier happens in Phase 2 at `.propdesc`
+  generation time, not here (item 2 above). No type field - everything is
+  `String` (item 3 above).
+- **Tests passed:** hand-written example file parses correctly; simulated
+  Add computes the correct next PID and persists it; simulated Remove
+  deletes the key and persists that; re-reading after each operation
+  reflects the change. Verified via a throwaway round-trip script - format
+  is settled.
 
 ### Phase 1 - list editor (unprivileged GUI)
 WinForms: `ListBox` + textbox + Add/Remove buttons, reads/writes
-`fields.json` directly (free-text names - sanitization for the schema
-identifier happens in Phase 2, not here; no type picker - everything is
-`String`, per item 3 above). No elevation, no registry/COM work. Being
-built incrementally ("as we go") rather than all at once.
+`fields.json` directly. Add computes `max(existing PIDs, default 99) + 1`
+and writes the new key; Remove deletes the key outright (free-text names -
+sanitization for the schema identifier happens in Phase 2, not here; no
+type picker - everything is `String`, per item 3 above). No elevation, no
+registry/COM work. Being built incrementally ("as we go") rather than all
+at once.
 - **Tests to pass before relying on it for later phases:** Add a field ->
-  appears in the list and is written to disk; Remove a field -> disappears
-  from both the list and the file; relaunching the app reloads the saved
-  list correctly (persistence round-trip); duplicate/invalid entries are
-  rejected without crashing; confirm no UAC prompt ever appears from this
-  app (proves it stays unprivileged).
+  appears in the list with the correct next PID and is written to disk;
+  Remove a field -> disappears from both the list and the file; relaunching
+  the app reloads the saved list correctly (persistence round-trip);
+  duplicate/invalid entries are rejected without crashing; confirm no UAC
+  prompt ever appears from this app (proves it stays unprivileged).
 
 ### Phase 2 - schema generation + elevated Apply tool
 Reads `fields.json` and, on Apply (elevation prompt):
@@ -512,12 +540,11 @@ Reads `fields.json` and, on Apply (elevation prompt):
    run where nothing is registered yet).
 2. Regenerate our own `.propdesc` XML (our namespace, not SolidWorks's,
    one shared FMTID per item 1 above) - one `<propertyDescription
-   type="String">` + `<labelInfo label="...">` per tracked field,
+   type="String">` + `<labelInfo label="...">` per tracked field, using the
+   PID already stored against that name in `fields.json`, and
    auto-sanitizing each field's name into a valid canonical identifier
    while keeping the original string as the label and as the SWDM lookup
-   name (item 2); assign each new field name the next PID from
-   `fieldRegistry.json`, appending new entries as needed, never reusing a
-   retired one.
+   name (item 2).
 3. `PSRegisterPropertySchema` the new file.
 4. Ensure `PropertyHandlers\.sldprt`/`.sldasm`/`.slddrw` point at our CLSID.
    Revert (uninstall, or re-asserting after drift) always writes the
@@ -540,8 +567,7 @@ Reads `fields.json` and, on Apply (elevation prompt):
   Apply; removing a field then re-running Apply makes that column
   disappear from `List-ExplorerColumns.ps1`'s output too (proves the
   unregister-before-overwrite ordering actually works, not just additive
-  registration); re-adding a previously-removed field gets back the same
-  PID from `fieldRegistry.json` rather than a fresh one; an already-open
+  registration); an already-open
   Explorer window either picks up the new columns live or is confirmed not
   to (item 10); an "undo"/revert run writes the hardcoded original
   SolidWorks CLSID and unregisters our schema, after which
