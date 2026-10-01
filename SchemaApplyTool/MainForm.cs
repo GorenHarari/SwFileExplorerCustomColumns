@@ -22,10 +22,15 @@ namespace SchemaApplyTool
         // handler (Phase 3 doesn't exist yet). See CLAUDE.md, Phase 2.
         private const string PlaceholderClsid = "{00000000-0000-0000-0000-000000000000}";
 
+        // SwPropertyHandler's real CLSID (see CLAUDE.md, Phase 3). Phase 4:
+        // glue this tool to the real handler instead of the placeholder.
+        private const string RealHandlerClsid = "{E558E17D-51E7-4043-89D8-5EDB8498454F}";
+
         private readonly TextBox _log = new TextBox();
         private readonly Button _applySchemaButton = new Button();
         private readonly Button _testRepointButton = new Button();
         private readonly Button _revertButton = new Button();
+        private readonly Button _repointRealButton = new Button();
         private readonly Label _fieldsLabel = new Label();
 
         public MainForm()
@@ -57,17 +62,24 @@ namespace SchemaApplyTool
             _revertButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _revertButton.Click += (s, e) => RunSafely(RevertPropertyHandlers);
 
+            _repointRealButton.Text = "Repoint to Real Handler (Phase 4)";
+            _repointRealButton.SetBounds(12, 116, 300, 30);
+            _repointRealButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            _repointRealButton.BackColor = System.Drawing.Color.LightYellow;
+            _repointRealButton.Click += (s, e) => RunSafely(RepointToRealHandler);
+
             _log.Multiline = true;
             _log.ScrollBars = ScrollBars.Vertical;
             _log.ReadOnly = true;
             _log.Font = new System.Drawing.Font("Consolas", 9f);
-            _log.SetBounds(12, 118, 520, 300);
+            _log.SetBounds(12, 154, 520, 264);
             _log.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             Controls.Add(_fieldsLabel);
             Controls.Add(_applySchemaButton);
             Controls.Add(_testRepointButton);
             Controls.Add(_revertButton);
+            Controls.Add(_repointRealButton);
             Controls.Add(_log);
 
             if (!isAdmin)
@@ -195,6 +207,34 @@ namespace SchemaApplyTool
 
             NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, NativeMethods.SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
             AppendLog("Reverted. Description/OpenTime/LastSavedWith should work again.");
+        }
+
+        private void RepointToRealHandler()
+        {
+            AppendLog("--- Repoint to Real Handler: before ---");
+            foreach (var kvp in PropertyHandlerRegistry.GetCurrentClsids())
+            {
+                AppendLog($"  {kvp.Key} -> {kvp.Value ?? "(none)"}");
+            }
+
+            foreach (string ext in PropertyHandlerRegistry.Extensions)
+            {
+                PropertyHandlerRegistry.SetClsid(ext, RealHandlerClsid);
+            }
+
+            AppendLog("--- Repoint to Real Handler: after ---");
+            foreach (var kvp in PropertyHandlerRegistry.GetCurrentClsids())
+            {
+                AppendLog($"  {kvp.Key} -> {kvp.Value ?? "(none)"}");
+            }
+
+            NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, NativeMethods.SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+            AppendLog("Repointed to SwPropertyHandler. Note: SolidWorks's own Description/OpenTime/");
+            AppendLog("LastSavedWith PKEYs are served by nobody now and will go blank - our handler");
+            AppendLog("only answers for our own schema's PROPERTYKEYs (fields.json), which includes");
+            AppendLog("its own separate 'Description' column among the 18 tracked fields. This is");
+            AppendLog("the intended full-replacement design, not a bug. Click 'Revert PropertyHandlers'");
+            AppendLog("to restore SolidWorks's original handler.");
         }
     }
 }

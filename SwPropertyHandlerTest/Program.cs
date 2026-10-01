@@ -9,6 +9,14 @@ class Program
             ? args[0]
             : @"C:\Users\Goren Harari\source\repos\SwFileExplorerCustomColumns\220-320612 WalkAir_WheelAxle.SLDPRT";
 
+        // Direct (non-COM) instantiation first, to isolate whether any
+        // discrepancy is in the compiled logic or in COM activation/caching.
+        var direct = new SwPropertyStore();
+        ((IInitializeWithFile)direct).Initialize(filePath, 0);
+        ((IPropertyStore)direct).GetCount(out uint directCount);
+        Console.WriteLine($"[Direct, non-COM] GetCount() = {directCount}");
+        Console.WriteLine();
+
         var clsid = new Guid("E558E17D-51E7-4043-89D8-5EDB8498454F");
 
         Type comType = Type.GetTypeFromCLSID(clsid);

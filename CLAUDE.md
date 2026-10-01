@@ -15,6 +15,22 @@ sortable/filterable columns in Windows Explorer.
   format SolidWorks uses now, it is not a real OLE compound file that
   generic Windows structured-storage code (or any non-SolidWorks component)
   could read directly.
+  - **Noted for the record (session 4), not currently acted on:** the
+    official SOLIDWORKS API documentation for `IModelDoc2.SummaryInfo`
+    (full SolidWorks API, not SWDM - dated 2019) states file summary
+    information "is written as an OLE property set into a stream named
+    '\005Summary Information' off the root storage of the SOLIDWORKS
+    document's compound file" - i.e. claims the file *is* OLE compound
+    storage, contradicting the direct byte-level check above. Read as
+    likely stale documentation describing an older SolidWorks file format
+    generation (the "Remarks" text references MFC/`DRAWCLI`/`CSummInfo`,
+    old Visual C++ sample code) rather than evidence the direct check is
+    wrong - the byte-level signature mismatch and `StgOpenStorage` failure
+    are repeatable, direct observations of the actual current file, not a
+    secondhand claim. Not re-verified further this session; flagged here so
+    it isn't missed if it resurfaces or turns out to matter later (e.g. if
+    an older SolidWorks version's files genuinely are OLE compound storage
+    and this project ever needs to handle both generations).
 - **The real mechanism, found by reading the registry and SolidWorks' own
   property schema file directly (not guesswork):**
   - `.sldprt`/`.sldasm`/`.slddrw` each register exactly one relevant shell
@@ -648,17 +664,18 @@ differed from the original plan" below):**
   open a new tab/window rather than expecting an already-open one to
   refresh.
 
-**How this differed from the original plan:** the plan called for testing
-the `PropertyHandlers` repoint on a non-production machine/VM first, since
-it temporarily breaks Description/OpenTime/LastSavedWith on real SolidWorks
-files. No VM was available this session; ran it directly on the primary
-machine instead, with explicit confirmation before each risky step, a
-pre-established baseline to compare against, and the already-proven
-hardcoded-CLSID revert as the safety net. The breakage window was seconds
-long and fully confirmed reversible before moving on - judged an acceptable
-substitute for a VM in this specific case, not a precedent for skipping
-that caution on riskier future steps (e.g. Phase 4's full integration with
-a real, untested handler).
+**Correction (session 4): this machine is Goren's non-production machine,
+not "the primary machine"** - the plan's "test on a non-production
+machine/VM first" requirement is satisfied by working here, full stop, not
+a substitute or a risk judgment call as originally written above. Goren's
+actual production environment is referred to as "the work computer" -
+separate hardware, not yet touched by anything in this project. Everything
+through Phase 4 is being built and fully verified on this machine; only
+after that passes does any of it move to the work computer. The explicit
+confirmation-before-each-risky-step discipline and the pre-established
+baseline/hardcoded-revert safety net described above are still accurate
+and worth keeping regardless of which machine this is - just not because a
+VM was unavailable.
 
 ### Phase 3 - the property handler itself - core implementation done, tested; remaining risk tests deferred
 Built as raw .NET COM interop, deliberately **not** SharpShell - unconfirmed
@@ -741,29 +758,120 @@ batch to check the per-file performance budget. None of these are solved
 yet - the core implementation works, but Phase 3 isn't fully closed out
 until these run.
 
-### Phase 4 - full integration (registration + real repoint)
-Glue Phase 2's Apply tool to Phase 3's real handler CLSID instead of a
-placeholder, on a non-production machine/VM first. Any handler rebuild
-during this phase's iteration requires restarting `explorer.exe` before the
-updated DLL can be deployed (item 7 above) - expected and disruptive
-(closes open Explorer windows), not a bug.
-- **Tests to pass before trusting this on a real machine:** end-to-end -
-  Apply repoints to the real handler, the tracked fields become selectable
-  via Explorer's "Choose Columns", and values shown match known-good SWDM
-  output across the full fixture set; SolidWorks's own UI (File Properties
-  dialog, normal open/save) still behaves normally afterward (regression
-  check against the "might break something we're unaware of" risk raised
-  earlier); full uninstall/revert tested end-to-end (handler unregistered,
-  schema unregistered, `PropertyHandlers` restored to the hardcoded
-  original CLSID, Explorer back to the original 3-field behavior).
+### Phase 4 - full integration (registration + real repoint) - done, fully tested
+**Correction carried over from this session: this machine is Goren's actual
+non-production test machine** (see the correction note at the end of Phase
+2) - "work computer" is the separate, untouched production machine. Phase 4
+was built and fully tested here for real, not deferred.
+
+**Two design issues raised and resolved before testing the live repoint:**
+
+1. **What happens to Description/OpenTime/LastSavedWith (and more - see
+   below) once our handler fully replaces SolidWorks's own?** Initially
+   proposed blocking these names in `FieldListEditor` with a message box.
+   Better fix, implemented instead: `SwPropertyHandler` now directly serves
+   these under SolidWorks's own original PROPERTYKEYs (not duplicated under
+   our schema), so they keep working seamlessly after repoint instead of
+   going blank. Turned out to be a bigger set than first thought - the
+   original `CSolidworkPropertyStore` reported **9** properties, not 3
+   (confirmed by re-reading the earlier baseline dump): the 3 Explorer
+   columns (`Description`/`OpenTime`/`LastSavedWith`) plus 6 generic
+   Windows Summary-tab properties (`System.Title`/`Author`/`Subject`/
+   `Comment`/`Keywords`/`Rating`). Implemented 8 of the 9 in
+   `SwPropertyHandler/LegacyProperties.cs`:
+   - `Description` -> `GetCustomPropertyValues("Description", ...)`,
+     `OpenTime` -> `GetFileAvgTime()`, `LastSavedWith` -> `GetVersion()` +
+     the version table (all already proven in Phase 3's core work).
+   - `Title`/`Subject`/`Author`/`Keywords`/`Comment` -> direct
+     `ISwDMDocument.Title`/`.Subject`/`.Author`/`.Keywords`/`.Comments`.
+     **Checked an assumption before relying on it**: these 5 share the
+     classic `SummaryInformation` FMTID/PIDs (`PIDSI_TITLE=2` etc.), which
+     raised the question of whether SolidWorks actually reads a literal
+     embedded OLE property-set stream for them (the official
+     `IModelDoc2.SummaryInfo` API docs, dated 2019, claim exactly that -
+     logged under "Background" above as a discrepancy worth remembering,
+     but judged likely stale documentation given the direct byte-level
+     proof earlier in this file that current SolidWorks files aren't OLE
+     compound storage at all). Since the file can't be read that way,
+     `CSolidworkPropertyStore` must source these from its own internal
+     Summary-tab data instead - the same data `ISwDMDocument`'s accessors
+     already expose (confirmed by matching blank values on the test file) -
+     so that's what `SwPropertyHandler` uses too; there's no separate
+     native mechanism to replicate.
+   - `Rating` excluded - no SWDM equivalent exists, stays unserved (also
+     always blank under the original handler).
+   - **`FieldListEditor`'s reserved-name list grew accordingly.** First
+     pass only blocked `Description`/`OpenTime`/`LastSavedWith`. Caught
+     mid-session: the 5 Summary-tab ones needed blocking too, for a
+     different reason than `Description` - they don't collide by reading
+     the *same* data (a tracked field named "Author" would read the
+     *custom property* "Author", a different store than the Summary tab's
+     Author field), but they'd still produce a second, confusingly-labeled
+     column, which is the actual problem worth preventing. Final reserved
+     list: `Description`, `OpenTime`, `LastSavedWith`, `Title`, `Subject`,
+     `Author`, `Authors`, `Comment`, `Comments`, `Keywords`, `Tags` (label
+     variants included since that's what a user is likely to type).
+     **`Description` and `Subject` had to be removed from the real,
+     already-seeded `fields.json`** since both were already tracked from
+     the original 18-property seed, predating this decision.
+2. **Can a tracked field reuse an already-existing Explorer column instead
+   of always minting a new `SwSync.*` one** (e.g. mapping a custom property
+   called "Creators" onto the generic, already-labeled `System.Author`
+   column)? **Yes in principle** - schema registration (what makes a
+   property selectable, with a label) and value-serving (which handler
+   answers `GetValue` for it) are fully decoupled in the Windows Property
+   System, so our handler could serve *any* already-registered PKEY it
+   wants, the same way `CSolidworkPropertyStore` itself reused the generic
+   Summary-tab PKEYs rather than registering its own. **Marked for later,
+   not built**: doing this properly means `fields.json` needs to carry
+   *which* PKEY to target per field (reuse an existing one vs. assign a new
+   one under our schema), and both `FieldListEditor` and `SwPropertyStore`
+   need to understand that distinction - a real, contained scope addition,
+   not something to fold into Phase 4's testing.
+
+**`SchemaApplyTool` gained a fourth action**: "Repoint to Real Handler
+(Phase 4)" - writes `SwPropertyHandler`'s real CLSID
+(`{E558E17D-51E7-4043-89D8-5EDB8498454F}`) to `PropertyHandlers` for all
+three extensions, deliberately separate from the existing placeholder-based
+"Test Repoint" button used in Phase 2.
+
+**Tests passed, live, on this machine:**
+- Repointed to the real handler; registry confirmed showing our CLSID on
+  all three extensions.
+- Live Explorer property resolution (the same `Shell.Application`
+  `ExtendedProperty` check used in Phase 2) confirmed: `Description`/
+  `OpenTime`/`LastSavedWith` still resolve correctly (now served by *our*
+  handler, not SolidWorks's - zero regression), and new tracked fields
+  (`Material`, `Weight`, `Number`) resolve with correct, resolved values.
+- Column count: `325` (baseline) + `16` (current tracked fields, after
+  removing `Description`/`Subject`) = `341`, confirmed via
+  `List-ExplorerColumns.ps1` - matches exactly, confirming the schema
+  regeneration dropped the right entries.
+- SolidWorks's own UI checked directly (not assumed): opened normally,
+  File Properties dialog normal, confirming `PropertyHandlers` is purely an
+  Explorer/Shell-level mechanism with no effect on SolidWorks's own
+  internal UI.
+- **Full revert tested end-to-end, completely clean:** clicked "Revert
+  PropertyHandlers" (registry back to SolidWorks's original CLSID on all
+  three extensions), then additionally ran `PSUnregisterPropertySchema`
+  against our `.propdesc` and `regasm /unregister` against the handler DLL
+  (via a one-off elevated script - **not yet a permanent button in
+  `SchemaApplyTool`**, worth adding later) - both succeeded (`0x00000000`
+  and "Types un-registered successfully"). Confirmed afterward: our CLSID
+  is completely gone from the registry (`reg query` returns "not found");
+  `OpenTime` reads back as `'0:01'` - SolidWorks's own original format, not
+  our `'0 mins 01 secs'`, unambiguous proof the original handler is serving
+  it again, not ours; column count back to exactly `325`, zero `SwSync.*`
+  entries remaining - the exact pre-project baseline.
 
 ### Ongoing - testing discipline and maintenance
-All of the above happens on a non-production machine/VM with SolidWorks
-installed, not the primary machine, until Phase 4's full integration tests
-pass there first. Separately, ongoing once deployed for real: re-run Apply
-after any SolidWorks update/repair to confirm `PropertyHandlers` still
-points at our handler rather than having silently reverted to SolidWorks's
-own (item 8 above).
+Phases 0-4 are now fully built and tested on this machine (Goren's
+non-production test machine). Next: move the verified setup to the work
+computer (the actual production target, untouched so far), and do Phase 5
+here first per the current plan. Separately, ongoing once deployed for
+real anywhere: re-run Apply after any SolidWorks update/repair to confirm
+`PropertyHandlers` still points at our handler rather than having silently
+reverted to SolidWorks's own (item 8 above).
 
 ## How Goren likes to work (carry this forward)
 - Programming beginner-ish; mainly does .NET SolidWorks and Excel add-ins, a

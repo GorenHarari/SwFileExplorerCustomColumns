@@ -42,39 +42,79 @@ namespace SwPropertyHandler
 
         public void GetCount(out uint cProps)
         {
-            cProps = (uint)_fields.Count;
+            cProps = (uint)(_fields.Count + LegacyProperties.All.Length);
         }
 
         public void GetAt(uint iProp, out PROPERTYKEY pkey)
         {
-            if (iProp >= _fields.Count)
+            if (iProp < _fields.Count)
+            {
+                pkey = new PROPERTYKEY(SchemaFormatId, (uint)_fields[(int)iProp].Value);
+                return;
+            }
+
+            int legacyIndex = (int)iProp - _fields.Count;
+            if (legacyIndex < 0 || legacyIndex >= LegacyProperties.All.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(iProp));
             }
 
-            pkey = new PROPERTYKEY(SchemaFormatId, (uint)_fields[(int)iProp].Value);
+            pkey = LegacyProperties.All[legacyIndex];
         }
 
         public void GetValue(ref PROPERTYKEY key, out object pv)
         {
             pv = null;
 
-            if (key.fmtid != SchemaFormatId || _doc == null)
-            {
-                return;
-            }
-
-            uint pid = key.pid;
-            string name = _fields.FirstOrDefault(f => f.Value == pid).Key;
-            if (name == null)
+            if (_doc == null)
             {
                 return;
             }
 
             try
             {
-                string value = _doc.GetCustomPropertyValues(name, out SwDmCustomInfoType _, out string _unused);
-                pv = value;
+                if (LegacyProperties.KeyEquals(key, LegacyProperties.Description))
+                {
+                    pv = _doc.GetCustomPropertyValues("Description", out SwDmCustomInfoType _, out string _unused1);
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.OpenTime))
+                {
+                    _doc.GetFileAvgTime(out string fileTime, out string _unused2);
+                    pv = fileTime;
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.LastSavedWith))
+                {
+                    pv = LegacyProperties.FormatVersion(_doc.GetVersion());
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Title))
+                {
+                    pv = _doc.Title;
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Subject))
+                {
+                    pv = _doc.Subject;
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Author))
+                {
+                    pv = _doc.Author;
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Keywords))
+                {
+                    pv = _doc.Keywords;
+                }
+                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Comment))
+                {
+                    pv = _doc.Comments;
+                }
+                else if (key.fmtid == SchemaFormatId)
+                {
+                    uint pid = key.pid;
+                    string name = _fields.FirstOrDefault(f => f.Value == pid).Key;
+                    if (name != null)
+                    {
+                        pv = _doc.GetCustomPropertyValues(name, out SwDmCustomInfoType _, out string _unused3);
+                    }
+                }
             }
             catch
             {
@@ -104,7 +144,16 @@ namespace SwPropertyHandler
                 string json = File.ReadAllText(FieldsPath);
                 var serializer = new JavaScriptSerializer();
                 var dict = serializer.Deserialize<Dictionary<string, int>>(json);
-                return dict.OrderBy(kvp => kvp.Value).ToList();
+
+                // Defensive: reserved names (Description/OpenTime/LastSavedWith) are
+                // always served via LegacyProperties instead - skip them here even if
+                // fields.json was hand-edited to include one, so a value is never
+                // reported twice under two different PROPERTYKEYs.
+                return dict
+                    .Where(kvp => !LegacyProperties.ReservedNames.Any(r =>
+                        string.Equals(r, kvp.Key, StringComparison.OrdinalIgnoreCase)))
+                    .OrderBy(kvp => kvp.Value)
+                    .ToList();
             }
             catch
             {

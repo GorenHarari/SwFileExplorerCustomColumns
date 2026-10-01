@@ -112,11 +112,41 @@ namespace FieldListEditor
             }
         }
 
+        // Already always served directly under SolidWorks's own legacy
+        // PROPERTYKEYs by the property handler - adding one of these as a
+        // tracked field would create a second, confusingly-labeled column
+        // reading a *different* data source (the custom property of that
+        // name, vs. the Summary tab field these actually serve), not a
+        // harmless duplicate. See CLAUDE.md, Phase 4 (Issue 1) and
+        // SwPropertyHandler/LegacyProperties.cs. Includes common label
+        // variants (Authors/Comments/Tags) since those are what a user is
+        // likely to type, not just the exact PKEY name.
+        private static readonly string[] ReservedNames =
+        {
+            "Description", "OpenTime", "LastSavedWith",
+            "Title", "Subject", "Author", "Authors", "Comment", "Comments", "Keywords", "Tags"
+        };
+
         private void AddField()
         {
             string name = _textBox.Text.Trim();
             if (string.IsNullOrEmpty(name))
             {
+                return;
+            }
+
+            if (ReservedNames.Any(r => string.Equals(r, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show(this,
+                    $"'{name}' can't be added as a tracked field.\n\n" +
+                    "This is one of the properties (Description, OpenTime, LastSavedWith, Title, " +
+                    "Subject, Author, Comments, Keywords) that the Explorer column handler always " +
+                    "provides automatically, continuing what SolidWorks's own handler used to show " +
+                    "for these - adding it here would create a second, confusingly-labeled column " +
+                    "reading a different, unrelated piece of data (a custom property of that name, " +
+                    "if one exists) rather than this one.",
+                    "Reserved field name",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
