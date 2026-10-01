@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <!-- Explorer is a 64-bit process on this machine (and SWDM is 64-bit only),
+         so this in-proc COM server must be x64, not AnyCPU. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- No auto class interface - the class is exposed strictly through the
+         explicit interfaces it implements (IInitializeWithFile, IPropertyStore),
+         not some auto-generated default dispatch interface. -->
+    <ComVisible>false</ComVisible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="SolidWorks.Interop.swdocumentmgr">
+      <HintPath>C:\Program Files\Common Files\SOLIDWORKS Shared\SolidWorks.Interop.swdocumentmgr.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+    <!-- Built into .NET Framework - no NuGet package needed for simple JSON read/write. -->
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+</Project>

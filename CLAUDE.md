@@ -267,6 +267,41 @@ sortable/filterable columns in Windows Explorer.
 - `SwDmLicenseKey.md` - **secret, git-ignored.** Holds the SolidWorks Document
   Manager API license key and how to set `SWDM_LICENSE_KEY` from it. Not in the
   repo; exists only on this machine.
+- `FieldListEditor/` - Phase 1. WinForms list editor (Add/Remove) for the
+  tracked SolidWorks custom-property names in
+  `C:\ProgramData\SwFileExplorerCustomColumns\fields.json`. No elevation,
+  no registry/COM work. **Built, run, verified interactively.** Own
+  subfolder for the same file-globbing reason as `SwFilterDump`.
+- `SchemaApplyTool/` - Phase 2. Elevated WinForms tool
+  (`app.manifest` requires administrator) with three actions: Apply Schema
+  (generate/register our own `.propdesc` under one permanent shared FMTID),
+  Test Repoint (write a placeholder CLSID to `PropertyHandlers` for all
+  three SolidWorks extensions), Revert (write back the hardcoded original
+  SolidWorks CLSID). **Built, run, verified** - schema add/remove/re-add
+  confirmed via real `List-ExplorerColumns.ps1` column-count changes, and
+  the full repoint/revert cycle confirmed live against this machine's real
+  registry (see Phase 2 below for detail). Must be launched via
+  `ShellExecute` (e.g. `Start-Process -Verb RunAs`), not a plain
+  `CreateProcess` call, or elevation silently fails with
+  `ERROR_ELEVATION_REQUIRED` and the exe never starts.
+- `SwPropertyHandler/` - Phase 3. The actual property handler: a managed
+  COM class (`SwPropertyStore`, CLSID
+  `{E558E17D-51E7-4043-89D8-5EDB8498454F}`) implementing
+  `IInitializeWithFile` + `IPropertyStore` via raw .NET COM interop (no
+  SharpShell - see Phase 3 below for why), reading tracked fields from
+  `fields.json` and resolved values via SWDM's `GetCustomPropertyValues`.
+  Registered via `regasm.exe /codebase` (x64 Framework regasm), also
+  requiring `ShellExecute`-based elevation. `LicenseKey.cs` is
+  **secret, git-ignored** (added in the same commit as this project) - the
+  SWDM license key baked in as a compiled constant. **Built, core logic
+  verified** against the real test part; the broader risk-test matrix
+  (fixtures, locked files, concurrency, performance) is deferred - see
+  Phase 3 below.
+- `SwPropertyHandlerTest/` - throwaway-style console harness for
+  `SwPropertyHandler`, same pattern as `SwFilterDump`'s
+  `TestPropertyHandler`: forces genuine COM activation via
+  `Type.GetTypeFromCLSID` + `Activator.CreateInstance` and exercises
+  `IInitializeWithFile`/`IPropertyStore` directly, independent of Explorer.
 - `README.md` - fuller run instructions for both scripts.
 
 ## Not yet done / open questions
@@ -625,43 +660,86 @@ substitute for a VM in this specific case, not a precedent for skipping
 that caution on riskier future steps (e.g. Phase 4's full integration with
 a real, untested handler).
 
-### Phase 3 - the property handler itself
-C# COM component (SharpShell likely, for the .NET COM registration
-boilerplate) implementing `IInitializeWithFile` + `IPropertyStore`:
-`Initialize` stores the file path; `GetCount`/`GetAt` enumerate whatever is
-currently in `fields.json`; `GetValue` opens the file via SWDM (using the
-baked-in license key constant, item 4 above) and calls
-`GetCustomPropertyValues` for the resolved value.
-**Test fixture set needed for this phase** (item 9 above): the existing
-test part, plus an assembly (`.sldasm`), a drawing (`.slddrw`), and a part
-with zero custom properties.
-- **Risks flagged for this phase (not solved yet):**
-  - *Performance* - Explorer may call this handler for every visible file
-    in a folder's Details view; opening a full SWDM document per file per
-    column could be slow for large assemblies or busy folders - likely
-    needs per-file result caching and a hard timeout so one slow/corrupt
-    file can't stall the whole folder view.
-  - *Concurrency/thread-safety* (item 6) - whether a shared
-    `ISwDMApplication` instance can be safely reused across concurrent
-    calls, or each needs its own, and any limit on simultaneously-open SWDM
-    documents - to be measured directly once there's code to measure.
-  - *File already open in SolidWorks* (item 5) - untested whether SWDM can
-    open a file read-only while SolidWorks itself holds it open; verify for
-    real rather than relying on the working assumption that it's fine.
-  - *Must never throw or hang* - this runs inside `explorer.exe`; every
-    path through `GetValue` needs defensive error handling, since a bug
-    here can hang or crash the shell machine-wide, not just this tool.
-- **Tests to pass before Phase 4:** handler DLL registers as a COM
-  component and loads cleanly via a direct test harness (same pattern as
-  `SwFilterDump`'s `TestPropertyHandler`); `GetCount()` matches the current
-  `fields.json` count; `GetAt`/`GetValue` return values matching known-good
-  SWDM output across the full fixture set (cross-checked against
-  `ReadSwProperties`/the SWDM probe results above); a file open in a
-  running SolidWorks session still returns correct values; concurrent
-  `GetValue` calls across multiple files don't error or deadlock; a
-  locked/corrupt/inaccessible file returns blank instead of throwing; a
-  timed batch of `GetValue` calls completes within an acceptable per-file
-  budget (threshold to be set when this phase starts).
+### Phase 3 - the property handler itself - core implementation done, tested; remaining risk tests deferred
+Built as raw .NET COM interop, deliberately **not** SharpShell - unconfirmed
+whether SharpShell even supports `IPropertyStore`-based property handlers
+(it's mostly built for context menus/thumbnails/preview handlers), and
+`SwFilterDump`'s `TestPropertyHandler` already proves the exact interface
+contracts work by consuming a real implementation - mirroring that directly
+avoids an unverified third-party dependency for uncertain benefit.
+
+**`SwPropertyHandler/`** - the COM class library (net48, x64, `ComVisible`
+false at the assembly level, true only on the one class):
+- `NativeInterop.cs` - `IInitializeWithFile` and `IPropertyStore` declared
+  for *implementing* (no `[ComImport]`), with GUIDs matching the real native
+  interfaces exactly (`B7D14566-...` / `886D8EEB-...`, same ones
+  `SwFilterDump` already validated by consuming them).
+  **Bug caught and fixed here, not copied from `SwFilterDump`:** that
+  project's `PROPERTYKEY.pid` is declared as a C# `long` (8 bytes) instead
+  of the real native `uint`/DWORD (4 bytes) - harmless there since it only
+  *reads* a struct a native callee already wrote (over-allocation + zero
+  extension on a little-endian CPU happens to produce the right number),
+  but would have been a real buffer-overrun risk here, where *we're* the
+  one Explorer calls into and must fill exactly the 20-byte buffer the
+  native caller actually allocated. Fixed: `pid` is `uint` in this project.
+  `GetValue`/`SetValue` use `object` marshaled as `UnmanagedType.Struct`
+  rather than a hand-built `PROPVARIANT` - the CLR's default marshaler
+  converts a managed string into a native `VARIANT` (`VT_BSTR`), which is
+  binary-compatible with `PROPVARIANT` for that case - the standard
+  technique for implementing `IPropertyStore` in managed code.
+- `SwPropertyStore.cs` - the class itself, CLSID
+  `{E558E17D-51E7-4043-89D8-5EDB8498454F}` (generated once, permanent, same
+  treatment as the schema FMTID). `Initialize` opens the SWDM document
+  *once* and reads `fields.json` *once*, both cached on the instance -
+  `GetCount`/`GetAt`/`GetValue` reuse that rather than re-opening the file
+  or re-reading the config per call (a deliberate first-pass performance
+  choice, not yet measured under load - see below). `GetValue` calls
+  `GetCustomPropertyValues` for the resolved value (not raw
+  `GetCustomProperty`, which only returns the unresolved formula-link
+  string for linked properties like Material). Every path that can be
+  reached from native code is wrapped so a failure degrades to a blank
+  value, never a thrown exception - `Initialize` itself never fails either,
+  so a file that can't be opened just means every subsequent `GetValue`
+  returns blank rather than the whole handler reporting unusable.
+  License key is in `LicenseKey.cs`, gitignored like `SwDmLicenseKey.md`
+  (added to `.gitignore` in the same commit) - baked in as a compiled
+  constant, per item 4's resolution, not read from an environment variable.
+- Registered via `regasm.exe /codebase` (the x64 Framework one -
+  `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe`), run
+  elevated (`Start-Process -Verb RunAs`, same lesson as Phase 2 about
+  `ShellExecute` vs. plain `CreateProcess`).
+
+**`SwPropertyHandlerTest/`** - throwaway-style console harness, same
+pattern as `SwFilterDump`'s `TestPropertyHandler`: `Type.GetTypeFromCLSID`
++ `Activator.CreateInstance` to force genuine COM activation (through
+`mscoree.dll`'s CLR hosting, CCW/RCW boundary included) rather than any
+same-process shortcut, then exercises `IInitializeWithFile`/`IPropertyStore`
+directly.
+
+**Tests passed:**
+- *Step 3a - proof the hosting mechanism works at all*, before any real
+  logic: a hardcoded single property round-tripped correctly through real
+  COM activation (`fmtid`/`pid` both correct, confirming the `PROPERTYKEY`
+  fix is right; string value returned and read back correctly, confirming
+  the `object`/`Struct` marshaling trick works).
+- *Step 3b - real logic*: wired up `fields.json` + SWDM. Ran against the
+  real test part (`220-320612 WalkAir_WheelAxle.SLDPRT`) - **all 18 tracked
+  fields returned correct, resolved values**, matching or improving on
+  every previously-known data point (`Material = '10B21'` and
+  `Weight = '22.77'` - the *resolved* values, not the raw
+  `"SW-Material@..."`/`"SW-Mass@..."` formula strings `ReadSwProperties`
+  shows via the non-resolving API).
+
+**Deferred to a future session, from Goren's work computer (not this
+machine):** the remaining Phase 3 risk tests still open from the plan -
+test fixture set (item 9: an `.sldasm`, a `.slddrw`, a part with zero
+custom properties - this machine's repo only has the one test part), a
+locked/corrupt/inaccessible file returning blank instead of throwing, a
+file open in a running SolidWorks session (item 5), concurrency/
+thread-safety under multiple simultaneous calls (item 6), and a timed
+batch to check the per-file performance budget. None of these are solved
+yet - the core implementation works, but Phase 3 isn't fully closed out
+until these run.
 
 ### Phase 4 - full integration (registration + real repoint)
 Glue Phase 2's Apply tool to Phase 3's real handler CLSID instead of a
