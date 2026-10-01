@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Microsoft.Win32;
 
-namespace SchemaApplyTool
+namespace SwColumnManager
 {
     // Reads/writes HKLM\...\PropertySystem\PropertyHandlers\<ext> for the
     // three SolidWorks document extensions. See CLAUDE.md, Phase 2 / item 8:

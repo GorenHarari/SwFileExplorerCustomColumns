@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="SwColumnManager.app"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <!--
+          Runs unprivileged by default - editing fields.json needs no admin
+          rights. "Apply Changes" and "Uninstall" re-launch this same exe
+          elevated (Start-Process-style, Verb=runas) with a command-line
+          flag instead of requiring elevation just to open the editor.
+        -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

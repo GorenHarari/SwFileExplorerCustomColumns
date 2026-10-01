@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace FieldListEditor
+namespace SwColumnManager
 {
     // Resolves "which existing Explorer column is this" to a real
     // PROPERTYKEY, via IShellFolder2::MapColumnToSCID - the actual Windows

@@ -4,7 +4,7 @@ using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace SchemaApplyTool
+namespace SwColumnManager
 {
     // Builds the .propdesc XML for our tracked fields. One shared FMTID for
     // the whole schema (see CLAUDE.md, Phase 2 / item 1) - every property

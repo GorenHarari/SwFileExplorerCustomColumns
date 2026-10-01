@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-namespace FieldListEditor
+namespace SwColumnManager
 {
     // One entry in fields.json: a tracked SolidWorks custom-property name
     // needing a brand-new column, and its permanently-assigned PID (see
@@ -40,34 +42,52 @@ namespace FieldListEditor
         private readonly TextBox _textBox = new TextBox();
         private readonly Button _addButton = new Button();
         private readonly Button _removeButton = new Button();
+        private readonly Button _applyButton = new Button();
+        private readonly Button _uninstallButton = new Button();
         private readonly Label _statusLabel = new Label();
 
         private Dictionary<string, int> _fields = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         public MainForm()
         {
-            Text = "SolidWorks Explorer Columns - Tracked Fields";
-            Width = 420;
-            Height = 440;
-            MinimumSize = new System.Drawing.Size(320, 320);
+            Text = "SolidWorks Explorer Columns";
+            Width = 480;
+            Height = 480;
+            MinimumSize = new System.Drawing.Size(420, 360);
 
-            _listBox.SetBounds(12, 12, 380, 300);
+            _listBox.SetBounds(12, 12, 440, 260);
             _listBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
-            _textBox.SetBounds(12, 322, 280, 24);
+            _textBox.SetBounds(12, 282, 340, 24);
             _textBox.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             _addButton.Text = "Add";
-            _addButton.SetBounds(300, 321, 92, 26);
+            _addButton.SetBounds(360, 281, 92, 26);
             _addButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             _addButton.Click += (s, e) => AddField();
 
             _removeButton.Text = "Remove";
-            _removeButton.SetBounds(12, 356, 380, 26);
+            _removeButton.SetBounds(12, 316, 440, 26);
             _removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             _removeButton.Click += (s, e) => RemoveSelectedField();
 
-            _statusLabel.SetBounds(12, 388, 380, 20);
+            _applyButton.Text = "Apply Changes";
+            _applyButton.SetBounds(12, 352, 214, 32);
+            _applyButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            _applyButton.BackColor = System.Drawing.Color.LightYellow;
+            _applyButton.Click += (s, e) => RunElevated("--apply",
+                "This will register the property handler and apply your tracked fields to " +
+                "Windows Explorer. You'll be prompted for administrator approval.");
+
+            _uninstallButton.Text = "Uninstall";
+            _uninstallButton.SetBounds(238, 352, 214, 32);
+            _uninstallButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            _uninstallButton.BackColor = System.Drawing.Color.MistyRose;
+            _uninstallButton.Click += (s, e) => RunElevated("--uninstall",
+                "This will remove the property handler and restore SolidWorks's original " +
+                "Explorer columns. You'll be prompted for administrator approval.");
+
+            _statusLabel.SetBounds(12, 390, 440, 40);
             _statusLabel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             _statusLabel.ForeColor = System.Drawing.SystemColors.GrayText;
             _statusLabel.Text = "Refreshing known-columns cache...";
@@ -85,6 +105,8 @@ namespace FieldListEditor
             Controls.Add(_textBox);
             Controls.Add(_addButton);
             Controls.Add(_removeButton);
+            Controls.Add(_applyButton);
+            Controls.Add(_uninstallButton);
             Controls.Add(_statusLabel);
 
             LoadFields();
@@ -125,7 +147,8 @@ namespace FieldListEditor
                 var serializer = new JavaScriptSerializer();
                 File.WriteAllText(KnownColumnsPath, serializer.Serialize(byName));
 
-                _statusLabel.Text = $"Known-columns cache refreshed: {byName.Count} columns.";
+                _statusLabel.Text = $"Known-columns cache refreshed: {byName.Count} columns. " +
+                                     "Click 'Apply Changes' after editing the list to make it live.";
             }
             catch (Exception ex)
             {
@@ -228,6 +251,39 @@ namespace FieldListEditor
             _fields.Remove(selected.Name);
             SaveFields();
             RefreshListBox();
+        }
+
+        private void RunElevated(string arg, string confirmMessage)
+        {
+            var confirm = MessageBox.Show(this, confirmMessage, "Confirm",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                var psi = new ProcessStartInfo(Application.ExecutablePath, arg)
+                {
+                    UseShellExecute = true,
+                    Verb = "runas"
+                };
+
+                Cursor = Cursors.WaitCursor;
+                using (var process = Process.Start(psi))
+                {
+                    process.WaitForExit();
+                }
+            }
+            catch (Win32Exception)
+            {
+                // User declined the UAC prompt - not an error, just cancelled.
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
         }
     }
 }

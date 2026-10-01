@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- Runs unprivileged by default (asInvoker) - "Apply Changes"/"Uninstall"
+         re-launch this same exe elevated with a command-line flag, rather
+         than requiring elevation just to open the field editor. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Built into .NET Framework - no NuGet package needed for simple JSON read/write. -->
+    <Reference Include="System.Web.Extensions" />
+    <!-- For ColumnLookup's use of dynamic against the Shell.Application COM object. -->
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ships the handler DLL alongside this exe - "Apply Changes" copies it
+         to its real install location (Program Files) and registers it from
+         there. Not a normal compile-time dependency (the handler is only
+         ever activated via its registered CLSID, not referenced by type),
+         but ProjectReference is the simplest way to get MSBuild to copy its
+         build output into this project's own output folder automatically. -->
+    <ProjectReference Include="..\SwPropertyHandler\SwPropertyHandler.csproj" />
+  </ItemGroup>
+
+</Project>

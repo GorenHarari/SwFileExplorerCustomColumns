@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace SchemaApplyTool
+namespace SwColumnManager
 {
     // propsys.dll's property schema (de)registration functions - the same
     // mechanism SwFilterDump's --refresh-schema mode already proved out

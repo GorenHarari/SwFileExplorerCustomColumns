@@ -283,23 +283,24 @@ sortable/filterable columns in Windows Explorer.
 - `SwDmLicenseKey.md` - **secret, git-ignored.** Holds the SolidWorks Document
   Manager API license key and how to set `SWDM_LICENSE_KEY` from it. Not in the
   repo; exists only on this machine.
-- `FieldListEditor/` - Phase 1. WinForms list editor (Add/Remove) for the
-  tracked SolidWorks custom-property names in
-  `C:\ProgramData\SwFileExplorerCustomColumns\fields.json`. No elevation,
-  no registry/COM work. **Built, run, verified interactively.** Own
-  subfolder for the same file-globbing reason as `SwFilterDump`.
-- `SchemaApplyTool/` - Phase 2. Elevated WinForms tool
-  (`app.manifest` requires administrator) with three actions: Apply Schema
-  (generate/register our own `.propdesc` under one permanent shared FMTID),
-  Test Repoint (write a placeholder CLSID to `PropertyHandlers` for all
-  three SolidWorks extensions), Revert (write back the hardcoded original
-  SolidWorks CLSID). **Built, run, verified** - schema add/remove/re-add
-  confirmed via real `List-ExplorerColumns.ps1` column-count changes, and
-  the full repoint/revert cycle confirmed live against this machine's real
-  registry (see Phase 2 below for detail). Must be launched via
-  `ShellExecute` (e.g. `Start-Process -Verb RunAs`), not a plain
-  `CreateProcess` call, or elevation silently fails with
-  `ERROR_ELEVATION_REQUIRED` and the exe never starts.
+- ~~`FieldListEditor/`~~ - **removed (session 5), superseded by
+  `SwColumnManager/`** below. Was Phase 1's unprivileged WinForms list
+  editor (Add/Remove) for `fields.json`. Kept here as a record: built, run,
+  verified interactively; own subfolder for the same file-globbing reason
+  as `SwFilterDump`.
+- ~~`SchemaApplyTool/`~~ - **removed (session 5), superseded by
+  `SwColumnManager/`** below. Was Phase 2's elevated WinForms tool
+  (`app.manifest` requires administrator) with per-step buttons (Apply
+  Schema, Test Repoint, Revert, Repoint to Real Handler, Full Uninstall).
+  Schema add/remove/re-add was confirmed via real
+  `List-ExplorerColumns.ps1` column-count changes, and the full
+  repoint/revert cycle confirmed live against this machine's real registry
+  (see Phase 2 below for detail) - that verification work stays valid, only
+  the tool itself was consolidated away. Confirmed during this project:
+  must launch an elevation-requiring exe via `ShellExecute` (e.g.
+  `Start-Process -Verb RunAs`), not a plain `CreateProcess` call, or
+  elevation silently fails with `ERROR_ELEVATION_REQUIRED` and the exe
+  never starts - still true for `SwColumnManager`'s self-elevating relaunch.
 - `SwPropertyHandler/` - Phase 3. The actual property handler: a managed
   COM class (`SwPropertyStore`, CLSID
   `{E558E17D-51E7-4043-89D8-5EDB8498454F}`) implementing
@@ -318,6 +319,41 @@ sortable/filterable columns in Windows Explorer.
   `TestPropertyHandler`: forces genuine COM activation via
   `Type.GetTypeFromCLSID` + `Activator.CreateInstance` and exercises
   `IInitializeWithFile`/`IPropertyStore` directly, independent of Explorer.
+  Also has `--batch <folder>` and `--concurrent <folder>` modes (see Phase 3
+  below) - dev/test only, not part of the shipped tool.
+- `SwColumnManager/` - **the shippable tool** (session 5), consolidating
+  `FieldListEditor` and `SchemaApplyTool` into one exe. Runs unprivileged by
+  default (`app.manifest` requests `asInvoker`), showing the same field
+  list editor as before; its "Apply Changes" and "Uninstall" buttons
+  re-launch the same exe elevated (`Verb="runas"`, a `--apply`/
+  `--uninstall` command-line flag) rather than requiring elevation just to
+  open the editor - the elevated relaunch shows an auto-closing log window
+  (`ElevatedActionForm`) rather than needing a manual close click on
+  success (stays open on an actual `ERROR`-prefixed failure so there's
+  something to read; a bare non-empty stderr isn't treated as failure,
+  since `regasm /codebase` routinely warns there on a non-strong-named
+  assembly like ours - that warning is benign, not a sign anything failed).
+  `InstallActions.cs` consolidates what used to be 3 separate manual steps
+  (hand-run `regasm`, click Apply Schema, click Repoint to Real Handler)
+  into one idempotent `Apply()`. Carries `ColumnLookup.cs` (Issue 2's
+  `IShellFolder2` interop) and a `ProjectReference` to `SwPropertyHandler`
+  purely so MSBuild copies the handler DLL (and its `SolidWorks.Interop.
+  swdocumentmgr.dll` dependency) into this project's own output folder -
+  "Apply" then copies that bundled DLL to
+  `%ProgramFiles%\SwFileExplorerCustomColumns\SwPropertyHandler.dll` and
+  registers *that* path via `regasm /codebase`, not a dev-repo path.
+  **Built, tested end-to-end**: Apply confirmed via registry (`CodeBase`
+  correctly points at the Program Files path, not this repo) and live
+  Explorer property resolution; Uninstall confirmed fully clean (DLL
+  removed, CLSID fully unregistered, `PropertyHandlers` reverted, schema
+  file deleted and its `PropertySchema` registry entry gone).
+- ~~`220-320612 WalkAir_WheelAxle.SLDPRT`~~ - **removed from the repo
+  (session 5)** - the real-company test part this entire research log
+  references throughout (custom properties, resolved values, etc. all stay
+  accurate as history) was a real file with real company/part data, not
+  something that belongs committed to what's now a shippable tool's repo.
+  Testing going forward uses Goren's local fixture folder instead
+  (`E:\for testing\A-EYE 2020\`, not part of this repo).
 - `README.md` - fuller run instructions for both scripts.
 
 ## Not yet done / open questions
