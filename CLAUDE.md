@@ -277,36 +277,338 @@ sortable/filterable columns in Windows Explorer.
   registered per-extension in `HKLM\...\PropertySystem\PropertyHandlers\`,
   hard-capped at exactly 9 properties). See "SOLVED" above. Nothing left
   unexplained in the existing mechanism.
-- Open, main: which of the three remaining options below to actually pursue
-  for surfacing more properties (Material, Number, Color, Weight,
-  Thickness, etc.) as live Explorer columns. Option 2 is now materially
-  de-risked - we have a complete working reference (registry key, required
-  interfaces, a live comparison object) rather than unknown COM territory.
+- **Resolved, decision made:** evaluated all three options below against two
+  hard constraints - (a) can it create a genuinely *new* named column (e.g.
+  "Material"), not just reuse an existing one, and (b) does it depend on
+  undocumented/reverse-engineered behavior of SolidWorks's own binaries.
+  - **Option 1 (sync into existing fields) dismissed.** Explorer only ever
+    asks the one registered `PropertyHandlers\.sldprt` component for a
+    property value; a brand-new schema name with no handler behind it
+    always renders blank. The sync approach can only ever repurpose the
+    ~5 existing writable Summary Info fields (`Title`/`Author`/`Subject`/
+    `Comments`/`Keywords`) that `sldpropertyhandler.dll` already serves -
+    it cannot create a column literally labeled "Material". Since the goal
+    requires real new column names, this option doesn't meet it.
+  - **Option 3 (Xarial commercial tool) dismissed** (user call, not
+    re-litigated here).
+  - **Option 2 (real property handler) is the direction**, but redesigned
+    to be safer than originally scoped: instead of reading
+    `sldsearchifilter.dll`/`sldpropertyhandler.dll`'s undocumented internal
+    behavior, source every property from the licensed, documented
+    **SolidWorks Document Manager (SWDM) API** - the same API
+    `ReadSwProperties`/`Program.cs` already uses successfully. Checked
+    directly (see below) that SWDM alone covers everything the existing
+    handler serves, so our handler can fully replace
+    `sldpropertyhandler.dll`'s registration with **no forwarding/wrapper
+    dependency on it** - removing the "might silently drop something we
+    didn't know `sldpropertyhandler.dll` did" risk entirely, since we're
+    not relying on it at runtime at all.
 
-## Longer-term options under consideration (roughly in order of effort/risk)
-1. **Sync approach**: a small app/scheduled task writes SW custom properties
-   into whichever standard Explorer fields the name-collision behavior (or
-   deliberate use of Comments/Title/etc.) makes visible. Lowest risk -
-   nothing runs inside explorer.exe.
-2. **Real Windows property handler** (C#, e.g. via the SharpShell library)
-   registered for .sldprt/.sldasm/.slddrw - true live/sortable columns for
-   any custom property name, but it's a COM component that loads inside
-   explorer.exe; a bug there can hang/crash the shell. Bigger scope, more
-   moving parts (COM registration, registry, 32/64-bit). **Now materially
-   de-risked**: we know the exact registration point
-   (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PropertySystem\
-   PropertyHandlers\.sldprt` etc. - currently pointing at
-   `sldpropertyhandler.dll`'s `{6A921E8A-C58C-4941-9E71-7946D9DCE941}`), the
-   exact interfaces required (`IInitializeWithFile` + `IPropertyStore`, both
-   already prototyped in `SwFilterDump`), and a live, working reference
-   object to compare our own implementation's behavior against. Repointing
-   that key to our own CLSID (rather than guessing at SharpShell's generic
-   approach blind) is a concrete, scoped task now, not exploratory COM work.
-3. **Xarial CAD+ Toolset "Properties+"** - existing commercial product that
-   already does this. Worth a look before/instead of building from scratch.
+### SWDM API coverage check (confirms Option 2 can be fully self-sufficient)
+Probed `SolidWorks.Interop.swdocumentmgr.dll` via reflection (all
+`ISwDMDocument`/`ISwDMDocument2`...`25` interfaces) and then live, against
+`220-320612 WalkAir_WheelAxle.SLDPRT`, to check whether SWDM alone can
+supply every property `sldpropertyhandler.dll`'s `CSolidworkPropertyStore`
+reports (see "SOLVED" above), without touching that DLL at all:
 
-No decision has been made yet on which of these to pursue - that depends on
-what the two scripts above turn up.
+| Handler's property | SWDM source | Verified result |
+|---|---|---|
+| `System.Title`/`Author`/`Subject`/`Comments`/`Keywords` | `ISwDMDocument.Title`/`Author`/`Subject`/`Comments`/`Keywords` (also have `set_*` - full read/write) | Blank on the test file both ways - matches |
+| `OpenTime` | `ISwDMDocument25.GetFileAvgTime(out bsFileTime, out bsLWFileTime)` | Returned `"0 mins 01 secs"` - same value as the handler's `"0:01"`, different formatting only |
+| `Description` | **Not Summary Info** - turned out to be the literal custom property named `"Description"` | File has a real custom property `Description = WalkAir_WheelAxle` (set during earlier guessing-phase testing) - exact match. Closes the "SOLVED" section's remaining ambiguity: the handler special-cases one specific custom-property name, same table `Material`/`Number` live in, it just doesn't report those other names through this interface. |
+| `LastSavedWith` | `ISwDMDocument.GetVersion()` | Returned raw int `12000` on this file. Confirmed against SolidWorks's own published API docs' version table: `12000 = SOLIDWORKS 2019` - exact match with the known `LastSavedWith` value. Full table (file-format version code -> product year), for any future file: 1500=2000, 1750=2001, 1950=2001Plus, 2200=2003, 2500=2004, 2800=2005, 3100=2006, 3400=2007, 3800=2008, 4100=2009, 4400=2010, 4700=2011, 5000=2012, 6000=2013, 7000=2014, 8000=2015, 9000=2016, 10000=2017, 11000=2018, 12000=2019, 13000=2020, 14000=2021, 15000=2022, 16000=2023, 17000=2024, 18000=2025, 19000=2026. |
+
+**Bigger finding - resolved values for linked custom properties, no `IFilter` needed:**
+`GetCustomProperty`/`GetCustomProperty2` only return the raw unresolved
+formula-link string for a linked property (e.g. `Material` ->
+`"SW-Material@...SLDPRT"`), matching what `ReadSwProperties` already showed.
+But `ISwDMDocument25.GetCustomPropertyValues(name, out type, out linkedTo)`
+returns the **resolved** value directly - tested against `Material` and got
+`"10B21"`, with `linkedTo` holding the raw formula string separately. This
+is the exact same resolved value the `IFilter` dump needed driving
+`sldsearchifilter.dll` directly to obtain (see "Ground truth" above) - SWDM
+alone gets us there instead, through the documented/licensed API.
+
+**Conclusion: nothing about our own property handler needs to depend on, or
+read, SolidWorks's own `sldsearchifilter.dll`/`sldpropertyhandler.dll`
+behavior at runtime.** All of it - every custom property (resolved),
+Summary Info fields, OpenTime, LastSavedWith - is available through SWDM.
+
+## Longer-term options under consideration
+1. ~~Sync approach~~ - **dismissed**, see above (can't create new named
+   columns).
+2. **Real Windows property handler, sourced entirely from SWDM - chosen
+   direction.** Implement `IInitializeWithFile` + `IPropertyStore` (both
+   already prototyped in `SwFilterDump`'s `TestPropertyHandler`), backed by
+   SWDM reads/writes instead of reverse-engineered DLL behavior. Register
+   our own CLSID at `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\
+   PropertySystem\PropertyHandlers\.sldprt` (and `.sldasm`/`.slddrw`),
+   replacing `sldpropertyhandler.dll`'s current
+   `{6A921E8A-C58C-4941-9E71-7946D9DCE941}` entry - fully, not as a
+   wrapper, since SWDM covers everything that DLL served (see coverage
+   check above). Also needs our own `.propdesc` schema (separate from
+   SolidWorks's, our own namespace) with `<labelInfo>` for each property we
+   want selectable as a column. Remaining real risk is unchanged from
+   before: this component loads inside `explorer.exe`, so a bug there can
+   hang/crash the shell machine-wide - mitigate with defensive error
+   handling/timeouts, and test on a non-production machine/VM first,
+   exercising normal SolidWorks workflows (not just Explorer) after
+   repointing the registry key, since the key's blast radius isn't fully
+   known (see risk discussion - nothing deletes/unregisters
+   `sldpropertyhandler.dll`'s own CLSID, only this one lookup entry, so
+   reverting is a single registry value).
+3. ~~Xarial CAD+ Toolset~~ - **dismissed** (user call).
+
+## Implementation plan (current - build in this order)
+Each phase has a defined set of tests that must pass before moving to the
+next phase - do not start the next phase until the current one's tests pass.
+Risks noted per phase are addressed when that phase is actually worked on,
+not before.
+
+### Plan review - holes found and resolved (session 3)
+Went over the plan item by item looking for gaps before starting Phase 0.
+Ten items came up; outcomes below are folded into the relevant phases
+further down, this section just records the reasoning (several were settled
+by checking the real `solidworksproperties.propdesc` file or this machine's
+actual registry instead of guessing):
+
+1. **PROPERTYKEY stability - resolved.** Checked the real
+   `solidworksproperties.propdesc` rather than inventing a scheme: SolidWorks
+   uses **one shared FMTID** for its entire schema
+   (`{6A9EEB69-672C-4B73-B1F3-A6EF662CF3C2}`) with a plain incrementing
+   `propID` per property (100, 101, 102...). We do the same: one FMTID
+   generated once for our schema, plus a persisted, append-only name->PID
+   registry (a field's PID is assigned once and never reused, even after
+   the field is removed) so Explorer's saved per-folder column layouts
+   (keyed by the full `{FMTID, PID}` pair) can never silently collide with
+   a different property later. This is also why two Explorer columns can
+   both be labeled "Description" with no conflict (SolidWorks's own vs.
+   Windows' generic one) - identity is the key pair, not the label.
+2. **Field name vs. schema identifier vs. display label - resolved.**
+   SolidWorks's own schema sidesteps this by hand-writing fixed XML: no
+   runtime user input. Ours takes free-text field names (which may contain
+   spaces/punctuation, e.g. "Part Number") that must become a valid
+   propdesc identifier. Resolution: auto-sanitize to build the canonical
+   schema name, but keep the original string as both the SWDM
+   property-name lookup and the `<labelInfo label="...">` display text.
+3. **Property type / sort semantics - resolved, simpler than expected.**
+   Checked every `typeInfo` in the real schema file:
+   `grep -o 'typeInfo type="[^"]*"' solidworksproperties.propdesc` returned
+   **`String` for all 21 matched entries, with zero exceptions** - including
+   `OpenTime`, which holds a literal duration string (`"0:01"`) and would be
+   the obvious candidate for numeric/duration typing. SolidWorks didn't
+   bother differentiating at all. We're doing the same: every tracked field
+   is registered as `type="String"`, no type picker in the editor. Revisit
+   only if a specific field's sort behavior turns out to matter in
+   practice.
+4. **Licensing inside the shell process - resolved.** The SWDM license key
+   is currently read from an environment variable in `Program.cs` purely as
+   a *git-hygiene* choice (keep the literal out of tracked source) - that
+   constraint is about what's committed, not how a compiled program gets
+   the value at runtime. The property handler will have the key **baked in
+   as a compiled constant** instead - no environment variable to read at
+   all, so no question of whether `explorer.exe`'s or the Search Indexer
+   service's account can see it. Tradeoff accepted: rotating the key later
+   needs a rebuild, not just a file edit - fine for a solo-machine tool
+   with a key that's effectively a static pass/fail check, unlikely to
+   change how it's validated.
+5. **SolidWorks has the file open while Explorer reads it - queued, not
+   solved.** Probably the most common real scenario (browsing while the
+   part is open in SolidWorks). Not solved now; queued as a Phase 3 test
+   case. Working assumption (SolidWorks uses a separate temp/image file
+   mechanism for open files, and SWDM's read-only open mode is documented
+   to coexist with a running SolidWorks session) is plausible but untested -
+   verify for real once Phase 3's handler exists.
+6. **Concurrency/thread-safety of the SWDM COM objects - queued.** Unknown
+   whether a shared `ISwDMApplication` instance is safe/fast enough to
+   reuse across concurrent `GetValue` calls (Explorer/the indexer may query
+   many files in a folder at once), or whether each call needs its own
+   instance (with that overhead feeding the performance risk below). Queued
+   as a Phase 3 test case - measure directly once there's handler code to
+   measure.
+7. **Redeploying the handler DLL while it's loaded - noted as a workflow
+   step, not solved.** Once loaded into a running `explorer.exe` (or the
+   Search Indexer), the DLL file can't just be overwritten. Updating the
+   handler during Phase 4 iteration will require killing/restarting
+   `explorer.exe` first (disruptive - closes open Explorer windows) as a
+   normal part of the deploy step.
+8. **`PropertyHandlers` key reverting after a SolidWorks repair - resolved,
+   confirmed empirically.** Original plan called for dynamically *backing
+   up* the current registry value before our first repoint - fragile (a
+   second Apply run could back up our own value instead of SolidWorks's
+   original). Fix: **hardcode the known original CLSID**
+   (`{6A921E8A-C58C-4941-9E71-7946D9DCE941}`) as the permanent revert
+   target instead - no backup needed at all. Checked whether this CLSID is
+   actually stable rather than assuming it: this machine has both SW2019
+   (`SOLIDWORKS\sldpropertyhandler.dll`, file version 27.5.0.0072) and
+   SW2020 (`SOLIDWORKS (2)\sldpropertyhandler.dll`, file version
+   28.5.0.0078) installed side by side. Scanned both binaries directly for
+   the CLSID string - **identical in both**
+   (`6A921E8A-C58C-4941-9E71-7946D9DCE941`). The live
+   `PropertyHandlers\.sldprt` registry value currently resolves to the
+   SW2020 copy (whichever version's installer/repair ran most recently
+   wins the single shared slot). A CLSID is a vendor-chosen constant baked
+   into the component at build time, not generated per-machine or
+   per-install, so this is expected to hold for any machine running either
+   of these versions, and - confirmed now across two real versions, not
+   just one - likely for other versions too, though that's not proven
+   beyond 2019/2020. Practical result: revert always means "write
+   `{6A921E8A-C58C-4941-9E71-7946D9DCE941}`" - the same action whether
+   we're deliberately uninstalling or just re-asserting our own repoint
+   after something else (e.g. a SolidWorks repair) silently changed it
+   back. **Ongoing maintenance note:** re-run Apply after any SolidWorks
+   update/repair to confirm the key still points at our handler.
+9. **Test fixture set too narrow - queued.** Every test described in this
+   plan references one single file
+   (`220-320612 WalkAir_WheelAxle.SLDPRT`). Before Phase 3/4 testing is
+   meaningful, the fixture set needs: an assembly (`.sldasm`), a drawing
+   (`.slddrw`), and a part with zero custom properties, in addition to the
+   existing part (which already covers a resolved linked property -
+   Material). Build this out when reaching that testing stage, not before.
+10. **Explorer live-refresh after Apply - queued.** Phase 2 assumes
+    `SHChangeNotify` (or equivalent) makes new columns selectable in
+    already-open Explorer windows without a restart. That's carried over
+    from general shell-extension knowledge, not verified for property
+    schema registration specifically. Needs to be an explicit Phase 2 test;
+    if it doesn't hold, the fallback is simply documenting that Explorer
+    windows need to be reopened after Apply.
+
+### Phase 0 - shared config format
+Two small files, not one, both machine-wide under
+`%ProgramData%\SwFileExplorerCustomColumns\`, since both an unprivileged GUI
+and a shell-loaded COM component need to read them:
+- `fields.json` - the editable list (Phase 1's GUI only ever touches this):
+  the tracked SolidWorks custom-property names (e.g. `Material`, `Weight`,
+  `Thickness`, `Project`), entered as free text, auto-sanitized for the
+  schema identifier (see item 2 above).
+- `fieldRegistry.json` - append-only, owned by the Apply tool (Phase 2):
+  persists the name -> PID mapping under our one shared FMTID (see item 1
+  above). Entries are never removed, even when a field drops out of
+  `fields.json`, so a re-added field gets its old identity back
+  automatically.
+- **Tests to pass before Phase 1:** both formats are fixed (JSON); a
+  hand-written example of each parses correctly in a throwaway read-back
+  test; no code depends on either file existing yet, so this phase just
+  needs the formats nailed down and one round-trip proven for each.
+
+### Phase 1 - list editor (unprivileged GUI)
+WinForms: `ListBox` + textbox + Add/Remove buttons, reads/writes
+`fields.json` directly (free-text names - sanitization for the schema
+identifier happens in Phase 2, not here; no type picker - everything is
+`String`, per item 3 above). No elevation, no registry/COM work. Being
+built incrementally ("as we go") rather than all at once.
+- **Tests to pass before relying on it for later phases:** Add a field ->
+  appears in the list and is written to disk; Remove a field -> disappears
+  from both the list and the file; relaunching the app reloads the saved
+  list correctly (persistence round-trip); duplicate/invalid entries are
+  rejected without crashing; confirm no UAC prompt ever appears from this
+  app (proves it stays unprivileged).
+
+### Phase 2 - schema generation + elevated Apply tool
+Reads `fields.json` and, on Apply (elevation prompt):
+1. `PSUnregisterPropertySchema` against the **currently-registered**
+   `.propdesc` (must run before the file is overwritten - it needs to see
+   the old content to know what to remove; skip this step on a true first
+   run where nothing is registered yet).
+2. Regenerate our own `.propdesc` XML (our namespace, not SolidWorks's,
+   one shared FMTID per item 1 above) - one `<propertyDescription
+   type="String">` + `<labelInfo label="...">` per tracked field,
+   auto-sanitizing each field's name into a valid canonical identifier
+   while keeping the original string as the label and as the SWDM lookup
+   name (item 2); assign each new field name the next PID from
+   `fieldRegistry.json`, appending new entries as needed, never reusing a
+   retired one.
+3. `PSRegisterPropertySchema` the new file.
+4. Ensure `PropertyHandlers\.sldprt`/`.sldasm`/`.slddrw` point at our CLSID.
+   Revert (uninstall, or re-asserting after drift) always writes the
+   hardcoded original SolidWorks CLSID
+   (`{6A921E8A-C58C-4941-9E71-7946D9DCE941}`, confirmed identical across
+   the SW2019 and SW2020 installs on this machine - see item 8 above) - no
+   dynamic backup needed.
+5. Notify Explorer (`SHChangeNotify` or equivalent) so the change is
+   visible without a restart - **verify this actually works for property
+   schema changes specifically** (item 10 above); if it doesn't, document
+   that Explorer windows need reopening after Apply.
+- **Risk flagged for this phase:** repointing `PropertyHandlers` is a
+  system-wide change whose full blast radius isn't confirmed (see risk
+  discussion above) - test on a non-production machine/VM, not the real
+  machine, the first several times.
+- **Tests to pass before Phase 3 relies on it:** running Apply with a
+  sample field list produces well-formed `.propdesc` XML; Apply prompts for
+  elevation and fails gracefully if declined; `List-ExplorerColumns.ps1`
+  (already in this repo) shows the new field names appear as columns after
+  Apply; removing a field then re-running Apply makes that column
+  disappear from `List-ExplorerColumns.ps1`'s output too (proves the
+  unregister-before-overwrite ordering actually works, not just additive
+  registration); re-adding a previously-removed field gets back the same
+  PID from `fieldRegistry.json` rather than a fresh one; an already-open
+  Explorer window either picks up the new columns live or is confirmed not
+  to (item 10); an "undo"/revert run writes the hardcoded original
+  SolidWorks CLSID and unregisters our schema, after which
+  Description/OpenTime/LastSavedWith still work exactly as before any of
+  this ran.
+
+### Phase 3 - the property handler itself
+C# COM component (SharpShell likely, for the .NET COM registration
+boilerplate) implementing `IInitializeWithFile` + `IPropertyStore`:
+`Initialize` stores the file path; `GetCount`/`GetAt` enumerate whatever is
+currently in `fields.json`; `GetValue` opens the file via SWDM (using the
+baked-in license key constant, item 4 above) and calls
+`GetCustomPropertyValues` for the resolved value.
+**Test fixture set needed for this phase** (item 9 above): the existing
+test part, plus an assembly (`.sldasm`), a drawing (`.slddrw`), and a part
+with zero custom properties.
+- **Risks flagged for this phase (not solved yet):**
+  - *Performance* - Explorer may call this handler for every visible file
+    in a folder's Details view; opening a full SWDM document per file per
+    column could be slow for large assemblies or busy folders - likely
+    needs per-file result caching and a hard timeout so one slow/corrupt
+    file can't stall the whole folder view.
+  - *Concurrency/thread-safety* (item 6) - whether a shared
+    `ISwDMApplication` instance can be safely reused across concurrent
+    calls, or each needs its own, and any limit on simultaneously-open SWDM
+    documents - to be measured directly once there's code to measure.
+  - *File already open in SolidWorks* (item 5) - untested whether SWDM can
+    open a file read-only while SolidWorks itself holds it open; verify for
+    real rather than relying on the working assumption that it's fine.
+  - *Must never throw or hang* - this runs inside `explorer.exe`; every
+    path through `GetValue` needs defensive error handling, since a bug
+    here can hang or crash the shell machine-wide, not just this tool.
+- **Tests to pass before Phase 4:** handler DLL registers as a COM
+  component and loads cleanly via a direct test harness (same pattern as
+  `SwFilterDump`'s `TestPropertyHandler`); `GetCount()` matches the current
+  `fields.json` count; `GetAt`/`GetValue` return values matching known-good
+  SWDM output across the full fixture set (cross-checked against
+  `ReadSwProperties`/the SWDM probe results above); a file open in a
+  running SolidWorks session still returns correct values; concurrent
+  `GetValue` calls across multiple files don't error or deadlock; a
+  locked/corrupt/inaccessible file returns blank instead of throwing; a
+  timed batch of `GetValue` calls completes within an acceptable per-file
+  budget (threshold to be set when this phase starts).
+
+### Phase 4 - full integration (registration + real repoint)
+Glue Phase 2's Apply tool to Phase 3's real handler CLSID instead of a
+placeholder, on a non-production machine/VM first. Any handler rebuild
+during this phase's iteration requires restarting `explorer.exe` before the
+updated DLL can be deployed (item 7 above) - expected and disruptive
+(closes open Explorer windows), not a bug.
+- **Tests to pass before trusting this on a real machine:** end-to-end -
+  Apply repoints to the real handler, the tracked fields become selectable
+  via Explorer's "Choose Columns", and values shown match known-good SWDM
+  output across the full fixture set; SolidWorks's own UI (File Properties
+  dialog, normal open/save) still behaves normally afterward (regression
+  check against the "might break something we're unaware of" risk raised
+  earlier); full uninstall/revert tested end-to-end (handler unregistered,
+  schema unregistered, `PropertyHandlers` restored to the hardcoded
+  original CLSID, Explorer back to the original 3-field behavior).
+
+### Ongoing - testing discipline and maintenance
+All of the above happens on a non-production machine/VM with SolidWorks
+installed, not the primary machine, until Phase 4's full integration tests
+pass there first. Separately, ongoing once deployed for real: re-run Apply
+after any SolidWorks update/repair to confirm `PropertyHandlers` still
+points at our handler rather than having silently reverted to SolidWorks's
+own (item 8 above).
 
 ## How Goren likes to work (carry this forward)
 - Programming beginner-ish; mainly does .NET SolidWorks and Excel add-ins, a
