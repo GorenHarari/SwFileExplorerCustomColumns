@@ -677,7 +677,7 @@ baseline/hardcoded-revert safety net described above are still accurate
 and worth keeping regardless of which machine this is - just not because a
 VM was unavailable.
 
-### Phase 3 - the property handler itself - core implementation done, tested; remaining risk tests deferred
+### Phase 3 - the property handler itself - fully done and tested, including all risk tests
 Built as raw .NET COM interop, deliberately **not** SharpShell - unconfirmed
 whether SharpShell even supports `IPropertyStore`-based property handlers
 (it's mostly built for context menus/thumbnails/preview handlers), and
@@ -731,7 +731,18 @@ pattern as `SwFilterDump`'s `TestPropertyHandler`: `Type.GetTypeFromCLSID`
 + `Activator.CreateInstance` to force genuine COM activation (through
 `mscoree.dll`'s CLR hosting, CCW/RCW boundary included) rather than any
 same-process shortcut, then exercises `IInitializeWithFile`/`IPropertyStore`
-directly.
+directly. Also gained `--batch <folder>` (times a fresh COM activation +
+full property read per file across every SolidWorks file in a folder) and
+`--concurrent <folder>` (same, but via `Parallel.ForEach` - one thread per
+file) modes, added to close out Phase 3's deferred performance/concurrency
+tests. **One real gotcha hit while using this harness, not a product bug:**
+since it statically references `SwPropertyHandler` (for the interface
+casts), the CLR loads that referenced copy into the process first; if only
+the library project gets rebuilt and not this harness, COM activation
+reuses the harness's stale already-loaded copy instead of the freshly
+built one at the registry's `CodeBase` path, silently testing old code.
+Explorer has no such static reference, so this is specific to testing via
+a harness built this way - always rebuild both projects together.
 
 **Tests passed:**
 - *Step 3a - proof the hosting mechanism works at all*, before any real
@@ -747,16 +758,51 @@ directly.
   `"SW-Material@..."`/`"SW-Mass@..."` formula strings `ReadSwProperties`
   shows via the non-resolving API).
 
-**Deferred to a future session, from Goren's work computer (not this
-machine):** the remaining Phase 3 risk tests still open from the plan -
-test fixture set (item 9: an `.sldasm`, a `.slddrw`, a part with zero
-custom properties - this machine's repo only has the one test part), a
-locked/corrupt/inaccessible file returning blank instead of throwing, a
-file open in a running SolidWorks session (item 5), concurrency/
-thread-safety under multiple simultaneous calls (item 6), and a timed
-batch to check the per-file performance budget. None of these are solved
-yet - the core implementation works, but Phase 3 isn't fully closed out
-until these run.
+**Update (later in session 4): all deferred risk tests run for real, not on
+the work computer but on this machine, against a real-world fixture folder**
+(`E:\for testing\A-EYE 2020\` - 35 real SolidWorks files Goren provided,
+including one deliberately open in a live SolidWorks 2020 session
+("sensor plate.SLDPRT"), one read-only on disk ("sensor tube
+26.9x2.3.SLDPRT"), and a part created with zero custom properties). Original
+plan was to defer these to the work computer; superseded once this fixture
+folder became available here.
+- **Fixture set (item 9) - closed.** Ran `SwPropertyHandlerTest` against
+  an assembly (`A-EYE sensor mounting assem.SLDASM`), a drawing
+  (`Arm assem.SLDDRW`), and the zero-properties part - all succeeded
+  cleanly (`GetCount` and every `GetValue` call returned without error;
+  the zero-properties part returned blank for every tracked field and
+  legacy `Description`, as expected, while `LastSavedWith` still correctly
+  resolved to `'SOLIDWORKS 2020'` - the version table confirmed working for
+  a second SolidWorks version now, not just 2019).
+- **File open in a running SolidWorks session (item 5) - closed,
+  confirmed rather than assumed.** Ran against `sensor plate.SLDPRT` while
+  it was genuinely open in SolidWorks 2020 (its `~$sensor plate.SLDPRT`
+  lock file present) - succeeded with correct resolved values
+  (`Material = 'AISI 316 Stainless Steel Sheet (SS)'`, etc.). SWDM's
+  read-only open mode does coexist with an active SolidWorks session, as
+  hoped.
+- **Read-only file - closed.** Ran against the read-only
+  `sensor tube 26.9x2.3.SLDPRT` - succeeded with correct resolved values.
+  (A genuinely *corrupt* file wasn't available to test against, so that
+  specific sub-case rests on the existing defensive try/catch around
+  `TryOpenDocument`/`GetValue` rather than being directly exercised - the
+  code path is the same one already proven for the zero-properties and
+  other cases, just not fired by an actually-malformed file.)
+- **Performance - closed.** Added a `--batch <folder>` mode to
+  `SwPropertyHandlerTest` that times a fresh COM activation + `Initialize`
+  + every `GetValue` call per file (matching how Explorer actually drives a
+  property handler - a new instance per item), run across all 35 real
+  files: **523 ms total, 14 ms/file average**, zero failures. Well within
+  an acceptable per-file budget for a folder view.
+- **Concurrency/thread-safety (item 6) - closed.** Added a
+  `--concurrent <folder>` mode (`Parallel.ForEach` - one thread per file,
+  each creating its own COM object independently): all 35 files succeeded
+  with **zero failures**, no deadlocks, no corrupted results. The handler
+  and the underlying SWDM calls are safe under genuine concurrent
+  multi-threaded access, at this real-world scale.
+
+**Phase 3 is now fully closed out** - every test in the original plan has
+run and passed, none remain deferred.
 
 ### Phase 4 - full integration (registration + real repoint) - done, fully tested
 **Correction carried over from this session: this machine is Goren's actual
@@ -866,12 +912,27 @@ three extensions, deliberately separate from the existing placeholder-based
 
 ### Ongoing - testing discipline and maintenance
 Phases 0-4 are now fully built and tested on this machine (Goren's
-non-production test machine). Next: move the verified setup to the work
-computer (the actual production target, untouched so far), and do Phase 5
-here first per the current plan. Separately, ongoing once deployed for
-real anywhere: re-run Apply after any SolidWorks update/repair to confirm
-`PropertyHandlers` still points at our handler rather than having silently
-reverted to SolidWorks's own (item 8 above).
+non-production test machine), including every risk test from Phase 3's
+original plan (none remain deferred - see Phase 3 above). Nothing has
+touched the work computer (the actual production target) yet - that's the
+next step, moving the now fully-verified setup there. Separately, ongoing
+once deployed for real anywhere: re-run Apply after any SolidWorks
+update/repair to confirm `PropertyHandlers` still points at our handler
+rather than having silently reverted to SolidWorks's own (item 8 above).
+
+### Known gaps / follow-ups not yet built
+- **Issue 2 (Phase 4):** reusing an already-existing Explorer column
+  identity for a tracked field (e.g. mapping a custom property onto the
+  generic `System.Author` column) instead of always minting a new
+  `SwSync.*` one - confirmed possible, not built. Needs `fields.json` to
+  carry which PKEY to target per field, understood by both
+  `FieldListEditor` and `SwPropertyStore`.
+- **`SchemaApplyTool` has no permanent full-uninstall button.** The
+  Phase 4 revert test's schema/COM unregistration steps were run via a
+  one-off elevated script, not the GUI tool - worth adding as a real
+  button if an actual uninstall path is ever needed outside testing.
+- **Deployment to the work computer** hasn't happened yet - everything
+  above is verified on the non-production test machine only.
 
 ## How Goren likes to work (carry this forward)
 - Programming beginner-ish; mainly does .NET SolidWorks and Excel add-ins, a
