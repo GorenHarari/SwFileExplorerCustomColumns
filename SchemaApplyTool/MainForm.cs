@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Principal;
@@ -26,11 +27,18 @@ namespace SchemaApplyTool
         // glue this tool to the real handler instead of the placeholder.
         private const string RealHandlerClsid = "{E558E17D-51E7-4043-89D8-5EDB8498454F}";
 
+        private const string RegAsmPath = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe";
+
+        private static readonly string HandlerDllPath = Path.Combine(
+            @"C:\Users\Goren Harari\source\repos\SwFileExplorerCustomColumns\SwPropertyHandler\bin\Release\net48",
+            "SwPropertyHandler.dll");
+
         private readonly TextBox _log = new TextBox();
         private readonly Button _applySchemaButton = new Button();
         private readonly Button _testRepointButton = new Button();
         private readonly Button _revertButton = new Button();
         private readonly Button _repointRealButton = new Button();
+        private readonly Button _fullUninstallButton = new Button();
         private readonly Label _fieldsLabel = new Label();
 
         public MainForm()
@@ -63,10 +71,16 @@ namespace SchemaApplyTool
             _revertButton.Click += (s, e) => RunSafely(RevertPropertyHandlers);
 
             _repointRealButton.Text = "Repoint to Real Handler (Phase 4)";
-            _repointRealButton.SetBounds(12, 116, 300, 30);
+            _repointRealButton.SetBounds(12, 116, 220, 30);
             _repointRealButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             _repointRealButton.BackColor = System.Drawing.Color.LightYellow;
             _repointRealButton.Click += (s, e) => RunSafely(RepointToRealHandler);
+
+            _fullUninstallButton.Text = "Full Uninstall";
+            _fullUninstallButton.SetBounds(242, 116, 150, 30);
+            _fullUninstallButton.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            _fullUninstallButton.BackColor = System.Drawing.Color.MistyRose;
+            _fullUninstallButton.Click += (s, e) => RunSafely(FullUninstall);
 
             _log.Multiline = true;
             _log.ScrollBars = ScrollBars.Vertical;
@@ -80,6 +94,7 @@ namespace SchemaApplyTool
             Controls.Add(_testRepointButton);
             Controls.Add(_revertButton);
             Controls.Add(_repointRealButton);
+            Controls.Add(_fullUninstallButton);
             Controls.Add(_log);
 
             if (!isAdmin)
@@ -235,6 +250,59 @@ namespace SchemaApplyTool
             AppendLog("its own separate 'Description' column among the 18 tracked fields. This is");
             AppendLog("the intended full-replacement design, not a bug. Click 'Revert PropertyHandlers'");
             AppendLog("to restore SolidWorks's original handler.");
+        }
+
+        // Reverses everything this tool can do: PropertyHandlers restored to
+        // SolidWorks's original CLSID, our schema unregistered and its file
+        // removed, our COM handler unregistered. Formalizes the one-off
+        // elevated script used to verify this manually during Phase 4
+        // testing (see CLAUDE.md) - this process is already elevated
+        // (its own manifest requires it), so no separate elevation prompt
+        // is needed for regasm here.
+        private void FullUninstall()
+        {
+            AppendLog("--- Full Uninstall: step 1 - revert PropertyHandlers ---");
+            RevertPropertyHandlers();
+
+            AppendLog("--- Full Uninstall: step 2 - unregister our schema ---");
+            if (File.Exists(SchemaPath))
+            {
+                int unregResult = NativeMethods.PSUnregisterPropertySchema(SchemaPath);
+                AppendLog($"PSUnregisterPropertySchema -> 0x{unregResult:X8}");
+                File.Delete(SchemaPath);
+                AppendLog($"Deleted {SchemaPath}");
+            }
+            else
+            {
+                AppendLog("No schema file on disk - nothing to unregister.");
+            }
+
+            AppendLog("--- Full Uninstall: step 3 - unregister the COM handler ---");
+            if (File.Exists(HandlerDllPath))
+            {
+                var psi = new ProcessStartInfo(RegAsmPath, $"\"{HandlerDllPath}\" /unregister")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using (var process = Process.Start(psi))
+                {
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+                    AppendLog($"regasm /unregister exit code: {process.ExitCode}");
+                    if (!string.IsNullOrWhiteSpace(output)) AppendLog(output.Trim());
+                    if (!string.IsNullOrWhiteSpace(error)) AppendLog("stderr: " + error.Trim());
+                }
+            }
+            else
+            {
+                AppendLog($"Handler DLL not found at {HandlerDllPath} - nothing to unregister.");
+            }
+
+            AppendLog("--- Full Uninstall complete ---");
         }
     }
 }

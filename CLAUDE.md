@@ -927,12 +927,21 @@ rather than having silently reverted to SolidWorks's own (item 8 above).
   `SwSync.*` one - confirmed possible, not built. Needs `fields.json` to
   carry which PKEY to target per field, understood by both
   `FieldListEditor` and `SwPropertyStore`.
-- **`SchemaApplyTool` has no permanent full-uninstall button.** The
-  Phase 4 revert test's schema/COM unregistration steps were run via a
-  one-off elevated script, not the GUI tool - worth adding as a real
-  button if an actual uninstall path is ever needed outside testing.
 - **Deployment to the work computer** hasn't happened yet - everything
   above is verified on the non-production test machine only.
+
+### `SchemaApplyTool` full-uninstall button - done, tested
+Was a known gap (the Phase 4 revert test's schema/COM unregistration steps
+were run via a one-off elevated script, not the GUI tool). Added a
+"Full Uninstall" button: reverts `PropertyHandlers` (reuses the existing
+Revert logic), unregisters and deletes our `.propdesc`, and runs
+`regasm /unregister` against the handler DLL (shelled out directly via
+`Process.Start` - no separate elevation prompt needed since this tool is
+already elevated via its own manifest). Tested against a real
+"needs cleaning up" state (schema file present, CLSID registered from the
+earlier deferred-test re-registration) - confirmed afterward: schema file
+deleted, CLSID completely gone from the registry, `PropertyHandlers` back
+to SolidWorks's original CLSID.
 
 ## How Goren likes to work (carry this forward)
 - Programming beginner-ish; mainly does .NET SolidWorks and Excel add-ins, a
