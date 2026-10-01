@@ -118,15 +118,14 @@ exist yet - go back to the previous section.
 
 ## How this tool works
 
-**One exe, two faces.** `SwColumnManager.exe` runs unprivileged by default
+`SwColumnManager.exe` runs unprivileged by default
 (the field editor). Its "Apply Changes" and "Uninstall" buttons re-launch
 the same exe elevated (`Verb=runas`, a hidden `--apply`/`--uninstall` flag)
 rather than requiring admin rights just to open the editor - standard
 "elevate only when actually needed" behavior. The elevated run shows plain
 console output and closes itself.
 
-**You rarely need to add anything.** Most SolidWorks custom properties
-already have a matching Explorer column - Windows ships hundreds of generic
+Windows ships hundreds of generic
 ones (Authors, Company, Status, Owner, Priority, Color, and so on). The
 property handler checks, for every custom property on every file, whether
 its name matches one of those - if it does, it's served under that
