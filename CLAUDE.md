@@ -517,20 +517,32 @@ Flat JSON object, name -> PID, under our one shared FMTID (item 1 above):
   reflects the change. Verified via a throwaway round-trip script - format
   is settled.
 
-### Phase 1 - list editor (unprivileged GUI)
-WinForms: `ListBox` + textbox + Add/Remove buttons, reads/writes
+### Phase 1 - list editor (unprivileged GUI) - done, tested
+`FieldListEditor/` (its own subfolder, same reasoning as `SwFilterDump` -
+keeps its `Program.cs` from colliding with the root-level
+`ReadSwProperties.csproj`'s SDK-style file globbing). WinForms, net48,
+`<UseWindowsForms>true</UseWindowsForms>`, no extra NuGet dependency -
+`System.Web.Script.Serialization.JavaScriptSerializer` (built into .NET
+Framework via a `System.Web.Extensions` reference) handles the JSON
+read/write. `ListBox` + textbox + Add/Remove buttons, reads/writes
 `fields.json` directly. Add computes `max(existing PIDs, default 99) + 1`
 and writes the new key; Remove deletes the key outright (free-text names -
 sanitization for the schema identifier happens in Phase 2, not here; no
-type picker - everything is `String`, per item 3 above). No elevation, no
-registry/COM work. Being built incrementally ("as we go") rather than all
-at once.
-- **Tests to pass before relying on it for later phases:** Add a field ->
-  appears in the list with the correct next PID and is written to disk;
-  Remove a field -> disappears from both the list and the file; relaunching
-  the app reloads the saved list correctly (persistence round-trip);
-  duplicate/invalid entries are rejected without crashing; confirm no UAC
-  prompt ever appears from this app (proves it stays unprivileged).
+type picker - everything is `String`, per item 3 above; list shows plain
+names only, no PID in the UI). No elevation, no registry/COM work.
+`fields.json` was seeded from the actual custom property names on the
+repo's test file (via `ReadSwProperties`, not guessed) rather than
+placeholder examples: `Number`, `Description`, `Material`, `Weight`,
+`Thickness`, `Color`, `Company`, `Category`, `Subject`, `Categories`,
+`Manufacturer`, `Model`, `Owner`, `Classification`, `Project`, `Language`,
+`Priority`, `Status`, PIDs 100-117, at the real destination
+(`C:\ProgramData\SwFileExplorerCustomColumns\fields.json`) - confirmed this
+write needs no elevation, as planned.
+- **Tests passed:** Add a field -> appeared in the list with the correct
+  next PID and was written to disk; Remove a field -> disappeared from
+  both the list and the file; closed and reopened the app - state
+  persisted correctly; verified interactively (Goren tried Add/Remove/
+  reopen directly, not just scripted).
 
 ### Phase 2 - schema generation + elevated Apply tool
 Reads `fields.json` and, on Apply (elevation prompt):
