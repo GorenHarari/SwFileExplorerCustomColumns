@@ -21,10 +21,24 @@ namespace SwColumnManager
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             "SwFileExplorerCustomColumns");
 
-        private static readonly string InstalledHandlerDllPath = Path.Combine(InstallDir, "SwPropertyHandler.dll");
+        private const string HandlerDllName = "SwPropertyHandler.dll";
+
+        // Not a direct dependency of this project - only copied because the
+        // handler needs it at runtime. .NET resolves a COM-hosted assembly's
+        // own references from *its own* directory, not explorer.exe's or
+        // anywhere else - confirmed the hard way: installing the handler
+        // without this file present left it silently non-functional (every
+        // property came back blank, even though every registry entry looked
+        // correct) until this was added.
+        private const string InteropDllName = "SolidWorks.Interop.swdocumentmgr.dll";
+
+        private static readonly string InstalledHandlerDllPath = Path.Combine(InstallDir, HandlerDllName);
+        private static readonly string InstalledInteropDllPath = Path.Combine(InstallDir, InteropDllName);
 
         private static readonly string SourceHandlerDllPath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "SwPropertyHandler.dll");
+            AppDomain.CurrentDomain.BaseDirectory, HandlerDllName);
+        private static readonly string SourceInteropDllPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory, InteropDllName);
 
         private static readonly string ConfigDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
@@ -38,15 +52,17 @@ namespace SwColumnManager
             log($"Install directory: {InstallDir}");
             Directory.CreateDirectory(InstallDir);
 
-            log("--- Step 1: install the property handler DLL ---");
+            log("--- Step 1: install the property handler DLL and its dependency ---");
             try
             {
                 File.Copy(SourceHandlerDllPath, InstalledHandlerDllPath, overwrite: true);
                 log($"Copied handler to {InstalledHandlerDllPath}");
+                File.Copy(SourceInteropDllPath, InstalledInteropDllPath, overwrite: true);
+                log($"Copied {InteropDllName} to {InstalledInteropDllPath}");
             }
             catch (IOException ex)
             {
-                log($"ERROR copying handler DLL: {ex.Message}");
+                log($"ERROR copying handler files: {ex.Message}");
                 log("If the handler is already loaded by a running explorer.exe (from a previous");
                 log("install), close Explorer windows or restart explorer.exe and try again.");
                 return;
@@ -127,6 +143,19 @@ namespace SwColumnManager
                 catch (IOException ex)
                 {
                     log($"Could not delete the handler DLL (likely still loaded by explorer.exe): {ex.Message}");
+                }
+
+                if (File.Exists(InstalledInteropDllPath))
+                {
+                    try
+                    {
+                        File.Delete(InstalledInteropDllPath);
+                        log($"Deleted {InstalledInteropDllPath}");
+                    }
+                    catch (IOException ex)
+                    {
+                        log($"Could not delete {InteropDllName}: {ex.Message}");
+                    }
                 }
             }
             else

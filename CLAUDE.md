@@ -1064,12 +1064,61 @@ removed as redundant - only `Number`, `Material`, `Thickness`, `Category`,
 ### Known gaps / follow-ups not yet built
 - **Deployment to the work computer** hasn't happened yet - everything
   above is verified on the non-production test machine only.
-- **Merging everything into one shippable tool** - currently five separate
-  projects (`FieldListEditor`, `SchemaApplyTool`, `SwPropertyHandler`,
-  `SwPropertyHandlerTest`, `SwFilterDump`) plus manual multi-step setup
-  (register the handler, run Apply Schema, repoint) - not yet packaged as
-  something a non-technical user (or future Goren) could install in one
-  step. Next thing to tackle.
+- **Config-file-based license key for wider binary distribution** - raised
+  while prepping the repo to go public (see README's license-key section).
+  Not built: `SwPropertyHandler` still needs the key compiled in, so a
+  prebuilt binary would carry whoever built it's specific key. Only matters
+  if this is ever handed to people who won't build it themselves.
+
+### Critical bug found and fixed during final pre-public review (session 5)
+Asked to do one more full pass for holes/bugs/edge cases after the repo
+went public. Found a real one by actually re-testing live Explorer
+resolution through `SwColumnManager`'s *actual* Apply flow - something that
+had only ever been spot-checked via registry state (`CodeBase` pointing at
+the right path), not re-verified end-to-end since the Program-Files install
+location was introduced.
+
+**The bug:** `InstallActions.Apply()` copied only `SwPropertyHandler.dll`
+to `%ProgramFiles%\SwFileExplorerCustomColumns\` - never its
+`SolidWorks.Interop.swdocumentmgr.dll` dependency. .NET resolves a
+COM-hosted assembly's references from *its own* directory, not
+`explorer.exe`'s - so the handler loaded "successfully" (every registry
+entry looked completely correct: CLSID registered, `CodeBase` right,
+`PropertyHandlers` repointed) but was **silently, completely
+non-functional** - every property, new-column or legacy, came back blank,
+with no error anywhere a user would see it. Reproduced directly: queried
+`SwSync.Material` and `Solidworks.Document.Description` on a real file
+through the live Explorer property path, got `''` for both; copied the
+missing DLL in by hand, same query immediately returned correct resolved
+values (`'AISI 316 Stainless Steel Sheet (SS)'`, `'sensor plate'`).
+
+This had gone unnoticed through all of Phase 4's testing because that
+testing used the `SwPropertyHandler`/dev-folder registration (both DLLs
+always sitting together there already) - the gap was introduced later,
+specifically by the Program-Files consolidation, and `SwPropertyHandlerTest`
+couldn't have caught it either, for the same reason (its own build output
+folder always has both DLLs via its own project reference).
+
+**Fix:** `InstallActions.cs` now copies `SolidWorks.Interop.swdocumentmgr
+.dll` alongside the handler on Apply, and removes it alongside the handler
+on Uninstall. Re-verified the full cycle after the fix: clean uninstall of
+the broken state, fresh Apply, confirmed both files present, confirmed live
+resolution correct across two different real fixture files (new-column and
+legacy properties both resolving correctly), clean uninstall again.
+
+**Minor, non-blocking edge cases noted while reviewing, not acted on:**
+- `SchemaGenerator.BuildCanonicalName`'s sanitizer falls back to the literal
+  string `"Field"` for a name with no alphanumeric characters at all (e.g.
+  tracking a property literally named `"!!!"`) - two such degenerate names
+  would collide on the same canonical schema identifier (different PIDs,
+  same `name=`). Only reachable with a deliberately symbols-only custom
+  property name, not a realistic one.
+- `MainForm.RunElevated` only catches `Win32Exception` (the UAC-decline
+  case) around the relaunch `Process.Start` - any other exception type
+  there would propagate to WinForms' default unhandled-exception path
+  instead of a graceful message. Very low likelihood (`Application
+  .ExecutablePath` is always valid for a running process) but not
+  impossible in principle.
 
 ### `SchemaApplyTool` full-uninstall button - done, tested
 Was a known gap (the Phase 4 revert test's schema/COM unregistration steps
