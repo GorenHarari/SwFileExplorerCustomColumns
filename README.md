@@ -13,15 +13,72 @@ working exactly as before.
 
 ## Requirements
 
-- Windows with SolidWorks installed (any recent version - the `Solid
+- Windows with SolidWorks installed (any recent version - the
   `SolidWorks.Interop.swdocumentmgr.dll` the handler depends on ships with
   every SolidWorks install).
 - .NET Framework 4.8 (already present on current Windows) and the .NET SDK
   to build.
-- A SolidWorks **Document Manager API** license key - separate from a
-  normal SolidWorks license, requested from the SOLIDWORKS Customer Portal
-  against your serial number (ask your reseller/VAR if you can't find the
-  request form). Needed to build `SwPropertyHandler` - see below.
+- Your own SolidWorks **Document Manager API** license key - see the next
+  section. **The repo will not build without one** - this is expected, not
+  a bug.
+
+## Getting your own Document Manager API license key (required, first)
+
+This is a separate credential from a normal SolidWorks license, and it's
+personal to you/your company - it is **not** included in this repo, cannot
+be shared, and nothing here will build without your own copy of it.
+
+1. Request a key from the **SOLIDWORKS Customer Portal**, against your own
+   SolidWorks serial number. If you can't find the request form there, ask
+   your SolidWorks reseller/VAR to point you to it.
+2. Copy the template file to a new, git-ignored file in the same folder:
+
+   ```powershell
+   Copy-Item SwPropertyHandler\LicenseKey.cs.example SwPropertyHandler\LicenseKey.cs
+   ```
+3. Open `SwPropertyHandler\LicenseKey.cs` and replace the placeholder with
+   your actual key:
+
+   ```csharp
+   namespace SwPropertyHandler
+   {
+       internal static class LicenseKey
+       {
+           public const string Value = "PASTE-YOUR-OWN-SWDM-LICENSE-KEY-HERE"; // <- replace this
+       }
+   }
+   ```
+
+   `LicenseKey.cs` is already listed in `.gitignore` - it will never be
+   picked up by `git add`/`git status` even by accident. Only
+   `LicenseKey.cs.example` (the placeholder template, no real key) is
+   actually committed to this repo.
+
+**Never commit your real key, and never distribute a compiled binary that
+has it baked in.** This key is licensed to you for your own use, tied to
+your SolidWorks serial number - not for letting other people use the paid
+Document Manager API for free through your credentials. If you want other
+people to be able to run this tool without building it themselves, don't
+bake your key into a shared `SwPropertyHandler.dll` - each person needs to
+go through the same two steps above with their own key (or ask, and this
+project's Apply flow could be changed to read the key from a per-machine
+config file set up at install time instead of a compiled constant, so
+prebuilt binaries never contain anyone's specific key - not built yet, but
+straightforward if wanted).
+
+`ReadSwProperties`/`SwFilterDump` (the dev/research tools - see below) use
+a *different* mechanism for the same key - an environment variable
+(`SWDM_LICENSE_KEY`), set with:
+
+```powershell
+$env:SWDM_LICENSE_KEY = '<your key>'
+```
+
+rather than a compiled constant. Both read the exact same kind of key;
+which mechanism applies depends only on which tool you're running (the
+property handler needs a compiled constant for reasons explained in
+"How this tool works" below - a property handler loaded into
+`explorer.exe` can't reliably see environment variables).
 
 ## Building
 
@@ -31,25 +88,14 @@ dotnet build SwColumnManager -c Release
 
 This also builds `SwPropertyHandler` (a project reference) and copies its
 DLL, plus its `SolidWorks.Interop.swdocumentmgr.dll` dependency, next to
-`SwColumnManager.exe` automatically.
-
-**Before this will build**, create `SwPropertyHandler/LicenseKey.cs` (it's
-git-ignored - secret, not part of this repo) with your own key:
-
-```csharp
-namespace SwPropertyHandler
-{
-    internal static class LicenseKey
-    {
-        public const string Value = "<your Document Manager API license key>";
-    }
-}
-```
-
-If `SolidWorks.Interop.swdocumentmgr.dll` isn't where `SwPropertyHandler
-.csproj`'s `HintPath` expects
+`SwColumnManager.exe` automatically. If `SolidWorks.Interop.swdocumentmgr
+.dll` isn't where `SwPropertyHandler.csproj`'s `HintPath` expects
 (`C:\Program Files\Common Files\SOLIDWORKS Shared\...`), fix that path to
 wherever your install actually put it.
+
+If you see a compiler error like `The name 'LicenseKey' does not exist in
+the current context`, that means `SwPropertyHandler\LicenseKey.cs` doesn't
+exist yet - go back to the previous section.
 
 ## Installing / using
 

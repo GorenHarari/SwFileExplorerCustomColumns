@@ -1,0 +1,18 @@
+// TEMPLATE - copy this file to "LicenseKey.cs" (same folder) and replace the
+// placeholder below with your own SolidWorks Document Manager API license
+// key. Do NOT commit the copy - LicenseKey.cs is already listed in
+// .gitignore for exactly this reason.
+//
+// Where to get a key: requested from the SOLIDWORKS Customer Portal against
+// your own SolidWorks serial number (separate from a normal SolidWorks
+// license - ask your reseller/VAR if you can't find the request form on the
+// portal). It is tied to your serial number specifically - you cannot reuse
+// someone else's key, and you should not share yours or compile it into any
+// binary you give to someone else (see README.md's licensing note).
+namespace SwPropertyHandler
+{
+    internal static class LicenseKey
+    {
+        public const string Value = "PASTE-YOUR-OWN-SWDM-LICENSE-KEY-HERE";
+    }
+}
