@@ -7,8 +7,12 @@ using System.Windows.Forms;
 
 namespace FieldListEditor
 {
-    // One entry in fields.json: a tracked SolidWorks custom-property name and
-    // its permanently-assigned PID (see CLAUDE.md, Phase 0).
+    // One entry in fields.json: a tracked SolidWorks custom-property name
+    // needing a brand-new column, and its permanently-assigned PID (see
+    // CLAUDE.md, Phase 0). Properties that already match an existing
+    // Explorer column are handled automatically by SwPropertyHandler via
+    // the knownColumns.json cache this editor maintains - they never need
+    // an entry here at all. See CLAUDE.md, Phase 4 / Issue 2.
     internal class FieldItem
     {
         public string Name { get; }
@@ -25,14 +29,18 @@ namespace FieldListEditor
 
     public class MainForm : Form
     {
-        private static readonly string ConfigPath = Path.Combine(
+        private static readonly string ConfigDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "SwFileExplorerCustomColumns", "fields.json");
+            "SwFileExplorerCustomColumns");
+
+        private static readonly string ConfigPath = Path.Combine(ConfigDir, "fields.json");
+        private static readonly string KnownColumnsPath = Path.Combine(ConfigDir, "knownColumns.json");
 
         private readonly ListBox _listBox = new ListBox();
         private readonly TextBox _textBox = new TextBox();
         private readonly Button _addButton = new Button();
         private readonly Button _removeButton = new Button();
+        private readonly Label _statusLabel = new Label();
 
         private Dictionary<string, int> _fields = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -40,27 +48,29 @@ namespace FieldListEditor
         {
             Text = "SolidWorks Explorer Columns - Tracked Fields";
             Width = 420;
-            Height = 420;
-            MinimumSize = new System.Drawing.Size(320, 300);
+            Height = 440;
+            MinimumSize = new System.Drawing.Size(320, 320);
 
             _listBox.SetBounds(12, 12, 380, 300);
-            _listBox.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom
-                               | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            _listBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             _textBox.SetBounds(12, 322, 280, 24);
-            _textBox.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left
-                               | System.Windows.Forms.AnchorStyles.Right;
+            _textBox.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             _addButton.Text = "Add";
             _addButton.SetBounds(300, 321, 92, 26);
-            _addButton.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right;
+            _addButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             _addButton.Click += (s, e) => AddField();
 
             _removeButton.Text = "Remove";
             _removeButton.SetBounds(12, 356, 380, 26);
-            _removeButton.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left
-                                    | System.Windows.Forms.AnchorStyles.Right;
+            _removeButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             _removeButton.Click += (s, e) => RemoveSelectedField();
+
+            _statusLabel.SetBounds(12, 388, 380, 20);
+            _statusLabel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            _statusLabel.ForeColor = System.Drawing.SystemColors.GrayText;
+            _statusLabel.Text = "Refreshing known-columns cache...";
 
             _textBox.KeyDown += (s, e) =>
             {
@@ -75,9 +85,52 @@ namespace FieldListEditor
             Controls.Add(_textBox);
             Controls.Add(_addButton);
             Controls.Add(_removeButton);
+            Controls.Add(_statusLabel);
 
             LoadFields();
             RefreshListBox();
+
+            // Fire-and-forget on load - a property name that already matches
+            // an existing Explorer column needs no entry here at all (see
+            // SwPropertyHandler), but it needs this cache to exist and be
+            // reasonably fresh. Cheap enough (well under a second for ~325
+            // columns, confirmed earlier) to just always redo on launch
+            // rather than add a manual refresh button to forget to click.
+            Shown += (s, e) => RefreshKnownColumnsCache();
+        }
+
+        private void RefreshKnownColumnsCache()
+        {
+            try
+            {
+                var columns = ColumnLookup.GetAllColumns();
+
+                var byName = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                foreach (var c in columns)
+                {
+                    // First occurrence wins if a display name has more than
+                    // one registered PROPERTYKEY (seen for a few names during
+                    // testing) - deterministic, simplest tie-break available.
+                    if (!byName.ContainsKey(c.Name))
+                    {
+                        byName[c.Name] = new Dictionary<string, object>
+                        {
+                            ["fmtid"] = c.Key.fmtid.ToString(),
+                            ["pid"] = c.Key.pid
+                        };
+                    }
+                }
+
+                Directory.CreateDirectory(ConfigDir);
+                var serializer = new JavaScriptSerializer();
+                File.WriteAllText(KnownColumnsPath, serializer.Serialize(byName));
+
+                _statusLabel.Text = $"Known-columns cache refreshed: {byName.Count} columns.";
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = $"Known-columns cache refresh failed: {ex.Message}";
+            }
         }
 
         private void LoadFields()
@@ -95,8 +148,7 @@ namespace FieldListEditor
 
         private void SaveFields()
         {
-            string dir = Path.GetDirectoryName(ConfigPath);
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(ConfigDir);
 
             var serializer = new JavaScriptSerializer();
             string json = serializer.Serialize(_fields);
@@ -116,9 +168,11 @@ namespace FieldListEditor
         // PROPERTYKEYs by the property handler - adding one of these as a
         // tracked field would create a second, confusingly-labeled column
         // reading a *different* data source (the custom property of that
-        // name, vs. the Summary tab field these actually serve), not a
-        // harmless duplicate. See CLAUDE.md, Phase 4 (Issue 1) and
-        // SwPropertyHandler/LegacyProperties.cs. Includes common label
+        // name, vs. the Summary tab field these actually serve - except
+        // Description, which genuinely is a custom-property-name match,
+        // just one SolidWorks itself already bothered to register a label
+        // for), not a harmless duplicate. See CLAUDE.md, Phase 4 (Issue 1)
+        // and SwPropertyHandler/LegacyProperties.cs. Includes common label
         // variants (Authors/Comments/Tags) since those are what a user is
         // likely to type, not just the exact PKEY name.
         private static readonly string[] ReservedNames =

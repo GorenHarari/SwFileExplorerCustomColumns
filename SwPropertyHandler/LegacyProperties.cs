@@ -29,11 +29,6 @@ namespace SwPropertyHandler
         // this same identity, sourced from its internal Summary tab data -
         // exactly what ISwDMDocument.Title/Author/Subject/Comments/Keywords
         // already expose (confirmed matching blank values on the test file).
-        // No reserved-name entry needed for these: unlike Description, they
-        // aren't looked up by name against the custom property table, so a
-        // tracked field called e.g. "Author" would read a completely
-        // different, independent piece of data (a custom property named
-        // "Author", if one exists) with no collision.
         private static readonly Guid SummaryInfoFormatId = new Guid("F29F85E0-4FF9-1068-AB91-08002B27B3D9");
 
         public static readonly PROPERTYKEY Title = new PROPERTYKEY(SummaryInfoFormatId, 2);
@@ -49,9 +44,20 @@ namespace SwPropertyHandler
         public static readonly PROPERTYKEY[] All =
             { Description, OpenTime, LastSavedWith, Title, Subject, Author, Keywords, Comment };
 
-        // Case-insensitive - these names can't be added to fields.json either
-        // (see FieldListEditor), since they're already always served here.
-        public static readonly string[] ReservedNames = { "Description", "OpenTime", "LastSavedWith" };
+        // Case-insensitive - excluded from both fields.json (see
+        // FieldListEditor) and the auto-match-against-existing-columns logic
+        // (see SwPropertyStore), since all of these are already always
+        // served here. Broader than just the 3 originally-unique names:
+        // "Title" and "Subject" in particular are exact matches against the
+        // SAME PROPERTYKEY this class already serves via the Summary tab -
+        // a file with an actual custom property literally named "Title"
+        // would otherwise auto-match to the identical PKEY, a real
+        // double-serving collision, not just a label collision.
+        public static readonly string[] ReservedNames =
+        {
+            "Description", "OpenTime", "LastSavedWith",
+            "Title", "Subject", "Author", "Authors", "Comment", "Comments", "Keywords", "Tags"
+        };
 
         public static bool KeyEquals(PROPERTYKEY a, PROPERTYKEY b) => a.fmtid == b.fmtid && a.pid == b.pid;
 

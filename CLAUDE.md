@@ -920,15 +920,91 @@ once deployed for real anywhere: re-run Apply after any SolidWorks
 update/repair to confirm `PropertyHandlers` still points at our handler
 rather than having silently reverted to SolidWorks's own (item 8 above).
 
+### Issue 2 (Phase 4) - done, tested live in Explorer
+Resolved as **automatic matching**, not manual per-field configuration -
+Goren's correction mid-build: "the property handler should serve by default
+properties that match existing columns; the list editor is just for fields
+that don't exist in the native full list." This generalizes what
+`Description` already was a special case of (a real custom property whose
+name SolidWorks happened to also register a label for) to *any* custom
+property name, for any file type.
+
+**How it works:**
+1. **`ColumnLookup.cs`** (in `FieldListEditor` only - deliberately kept out
+   of `SwPropertyHandler`, see below) drives `IShellFolder2::MapColumnToSCID`
+   directly to get the real PROPERTYKEY for every one of Explorer's ~325
+   named columns. Checked first whether the registry alone could answer
+   this (`PropertySchema` key only lists third-party registrations - Office,
+   SolidWorks - not Microsoft's ~250+ built-in core properties, which are
+   compiled into `propsys.dll` with no registry trail) - confirmed it
+   can't, so the live API call is necessary.
+   **First version crashed** (`AccessViolationException` in
+   `MapColumnToSCID`) from a `PROPERTYKEY.pid` type mismatch inherited by
+   copy-paste reasoning, not an actual bug in the declared interface order -
+   fixed by flattening `IShellFolder`+`IShellFolder2` into one interface
+   (not relying on C# interface inheritance to chain the native vtable) and
+   reducing every unused method's parameters to plain `IntPtr`, keeping
+   only `BindToObject` and `MapColumnToSCID` precisely marshaled. Verified
+   correct against every already-known PKEY (`Authors`, `Title`, `Subject`,
+   `Comments`, `Tags`, `Description`, `SW Open Time`, `SW Last saved with`)
+   before trusting it further - zero failures across all 325 columns.
+2. `FieldListEditor` regenerates `knownColumns.json` (name -> `{fmtid,pid}`
+   for all ~325 columns) automatically on every launch (cheap - well under
+   a second) rather than needing a manual refresh button.
+3. **`SwPropertyStore`'s `Initialize` now also calls
+   `GetCustomPropertyNames()`** to discover what custom properties *this
+   specific file* actually has (not just a fixed, predetermined list). For
+   each one (skipping the 8 names `LegacyProperties` already owns): if it
+   matches an entry in `knownColumns.json`, serve it under that *existing*
+   PROPERTYKEY; otherwise, if it's in `fields.json`, serve it under our own
+   schema's assigned PID. `fields.json` only ever needs entries for
+   properties with **no existing match** - everything else is automatic.
+   The risky `IShellFolder2` COM interop stays confined to
+   `FieldListEditor`: a crash there is an annoying standalone-tool crash,
+   never an `explorer.exe` one.
+4. **`LegacyProperties.ReservedNames` had to widen** from the original 3 to
+   all 8 (adding `Title`/`Subject`/`Author`/`Authors`/`Comment`/`Comments`/
+   `Keywords`/`Tags`) - a file with a literal custom property named "Title"
+   or "Subject" would otherwise auto-match to the *exact same PROPERTYKEY*
+   `LegacyProperties` already serves via the Summary tab, a real
+   double-serving collision, not just a label collision.
+
+**Cleaned up the real `fields.json`** once this was wired up: of the 16
+tracked fields at the time, **11 already had native column matches**
+(`Color`, `Company`, `Categories`, `Manufacturer`, `Model`, `Owner`,
+`Classification`, `Project`, `Language`, `Priority`, `Status`) and were
+removed as redundant - only `Number`, `Material`, `Thickness`, `Category`,
+`Weight` have no existing match and still need an explicit entry.
+
+**Tests passed:**
+- Direct harness: all three sources (new-column, auto-matched, legacy)
+  resolve correctly together - `GetCount()` now varies per file (13-15
+  across the 35-file fixture, down from a fixed 24) since auto-match is
+  file-specific, confirmed with zero failures in both the batch (11ms/file
+  average) and concurrent (zero failures) runs.
+- Live, via `Shell.Application.ExtendedProperty`: a new column
+  (`SwSync.Material`), an auto-matched one (`System.Company`, now showing
+  *our* data under a pre-existing native PKEY), and a legacy one
+  (`Solidworks.Document.Description`) all confirmed correct after a real
+  repoint. Column count exactly `325 + 5 = 330` - confirms auto-matched
+  fields correctly needed no new schema registration at all.
+- **Confirmed visually in a real Explorer window** (not just scripted
+  queries) against the `E:\for testing\A-EYE 2020` fixture: new columns,
+  auto-matched columns, and legacy columns all populated correctly across
+  varied real files (including the zero-properties part showing blank
+  everywhere, and an assembly/drawing both working); sorting by clicking a
+  new and an auto-matched column header both worked; no duplicate/unexpected
+  entries in the column chooser.
+
 ### Known gaps / follow-ups not yet built
-- **Issue 2 (Phase 4):** reusing an already-existing Explorer column
-  identity for a tracked field (e.g. mapping a custom property onto the
-  generic `System.Author` column) instead of always minting a new
-  `SwSync.*` one - confirmed possible, not built. Needs `fields.json` to
-  carry which PKEY to target per field, understood by both
-  `FieldListEditor` and `SwPropertyStore`.
 - **Deployment to the work computer** hasn't happened yet - everything
   above is verified on the non-production test machine only.
+- **Merging everything into one shippable tool** - currently five separate
+  projects (`FieldListEditor`, `SchemaApplyTool`, `SwPropertyHandler`,
+  `SwPropertyHandlerTest`, `SwFilterDump`) plus manual multi-step setup
+  (register the handler, run Apply Schema, repoint) - not yet packaged as
+  something a non-technical user (or future Goren) could install in one
+  step. Next thing to tackle.
 
 ### `SchemaApplyTool` full-uninstall button - done, tested
 Was a known gap (the Phase 4 revert test's schema/COM unregistration steps
