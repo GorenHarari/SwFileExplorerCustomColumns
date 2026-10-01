@@ -231,11 +231,22 @@ sortable/filterable columns in Windows Explorer.
   detail column on this PC to `ExplorerColumns.csv`, for cross-referencing
   candidate property names against the SW Custom tab. **Run** - found 325
   named columns.
-- `Program.cs` / `ReadSwProperties.csproj` - small console app that reads a
-  SolidWorks file's custom properties directly via the Document Manager API
+- `ReadSwProperties/` (`Program.cs` + `ReadSwProperties.csproj` - **moved
+  into their own subfolder in session 5**, having sat at the repo root
+  since the very first commit. That root placement turned out to be a real,
+  reproducible bug once enough sibling projects existed: an SDK-style
+  project with no subfolder globs `**/*.cs` from its own directory
+  recursively, so `dotnet build` on this project was silently sweeping up
+  every other project's `.cs` files too - harmless while every other file
+  just needed the BCL/the same SWDM interop reference this project already
+  had, until `SwColumnManager` (needing `System.Windows.Forms`) got added
+  and turned it into 60 real compile errors. Exactly the collision every
+  *other* project's own subfolder was already deliberately avoiding - this
+  one was just never moved) - small console app that reads a SolidWorks
+  file's custom properties directly via the Document Manager API
   (`SolidWorks.Interop.swdocumentmgr`), independent of Explorer. **Built and
-  run successfully** against `220-320612 WalkAir_WheelAxle.SLDPRT`. Required
-  fixes, now done:
+  run successfully** against the (now-removed, see above) test part.
+  Required fixes, now done:
   1. Document Manager API license key supplied. The key is **not** in source -
      `Program.cs` reads it at runtime from the `SWDM_LICENSE_KEY` environment
      variable, and the key itself (plus the exact commands to set it) lives in

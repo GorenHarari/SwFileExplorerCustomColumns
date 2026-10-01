@@ -226,8 +226,7 @@ than day-to-day use.
   PC knows about to `ExplorerColumns.csv` (index + display name), via the
   `Shell.Application` COM object. The simplest possible ground-truth check
   for "does a column with this exact name exist."
-- **`ReadSwProperties`** (`Program.cs` / `ReadSwProperties.csproj`, repo
-  root) - a small console app reading a SolidWorks file's custom
+- **`ReadSwProperties/`** - a small console app reading a SolidWorks file's custom
   properties directly via the Document Manager API, independent of
   Explorer entirely. Needs `SWDM_LICENSE_KEY` set as an environment
   variable (a different approach from `SwPropertyHandler`'s baked-in
