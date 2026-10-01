@@ -356,6 +356,15 @@ sortable/filterable columns in Windows Explorer.
   Explorer property resolution; Uninstall confirmed fully clean (DLL
   removed, CLSID fully unregistered, `PropertyHandlers` reverted, schema
   file deleted and its `PropertySchema` registry entry gone).
+  **UX pass (session 5):** field list starts genuinely empty with no
+  `fields.json` present (already correct - confirmed by clearing the real
+  file, dev-test leftovers, not a code gap); the textbox shows a native
+  placeholder ("Insert property name" via `EM_SETCUEBANNER`, not a fake
+  always-visible label); the status label explaining the known-columns
+  cache refresh was removed entirely - meaningless jargon to someone who
+  doesn't already know how the tool works internally. The cache refresh
+  itself is unchanged, just silent now (best-effort, no user-facing text
+  either way).
 - ~~`220-320612 WalkAir_WheelAxle.SLDPRT`~~ - **removed from the repo
   (session 5)** - the real-company test part this entire research log
   references throughout (custom properties, resolved values, etc. all stay

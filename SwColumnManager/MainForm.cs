@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -44,22 +45,28 @@ namespace SwColumnManager
         private readonly Button _removeButton = new Button();
         private readonly Button _applyButton = new Button();
         private readonly Button _uninstallButton = new Button();
-        private readonly Label _statusLabel = new Label();
 
         private Dictionary<string, int> _fields = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+
+        private const int EM_SETCUEBANNER = 0x1501;
 
         public MainForm()
         {
             Text = "SolidWorks Explorer Columns";
             Width = 480;
-            Height = 480;
-            MinimumSize = new System.Drawing.Size(420, 360);
+            Height = 430;
+            MinimumSize = new System.Drawing.Size(420, 320);
 
             _listBox.SetBounds(12, 12, 440, 260);
             _listBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             _textBox.SetBounds(12, 282, 340, 24);
             _textBox.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            _textBox.HandleCreated += (s, e) =>
+                SendMessage(_textBox.Handle, EM_SETCUEBANNER, IntPtr.Zero, "Insert property name");
 
             _addButton.Text = "Add";
             _addButton.SetBounds(360, 281, 92, 26);
@@ -87,11 +94,6 @@ namespace SwColumnManager
                 "This will remove the property handler and restore SolidWorks's original " +
                 "Explorer columns. You'll be prompted for administrator approval.");
 
-            _statusLabel.SetBounds(12, 390, 440, 40);
-            _statusLabel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            _statusLabel.ForeColor = System.Drawing.SystemColors.GrayText;
-            _statusLabel.Text = "Refreshing known-columns cache...";
-
             _textBox.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
@@ -107,7 +109,6 @@ namespace SwColumnManager
             Controls.Add(_removeButton);
             Controls.Add(_applyButton);
             Controls.Add(_uninstallButton);
-            Controls.Add(_statusLabel);
 
             LoadFields();
             RefreshListBox();
@@ -146,13 +147,11 @@ namespace SwColumnManager
                 Directory.CreateDirectory(ConfigDir);
                 var serializer = new JavaScriptSerializer();
                 File.WriteAllText(KnownColumnsPath, serializer.Serialize(byName));
-
-                _statusLabel.Text = $"Known-columns cache refreshed: {byName.Count} columns. " +
-                                     "Click 'Apply Changes' after editing the list to make it live.";
             }
-            catch (Exception ex)
+            catch
             {
-                _statusLabel.Text = $"Known-columns cache refresh failed: {ex.Message}";
+                // Best-effort refresh - a stale or missing cache just means less
+                // auto-matching until the next successful launch, not a crash.
             }
         }
 
