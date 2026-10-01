@@ -544,47 +544,86 @@ write needs no elevation, as planned.
   persisted correctly; verified interactively (Goren tried Add/Remove/
   reopen directly, not just scripted).
 
-### Phase 2 - schema generation + elevated Apply tool
-Reads `fields.json` and, on Apply (elevation prompt):
-1. `PSUnregisterPropertySchema` against the **currently-registered**
-   `.propdesc` (must run before the file is overwritten - it needs to see
-   the old content to know what to remove; skip this step on a true first
-   run where nothing is registered yet).
-2. Regenerate our own `.propdesc` XML (our namespace, not SolidWorks's,
-   one shared FMTID per item 1 above) - one `<propertyDescription
-   type="String">` + `<labelInfo label="...">` per tracked field, using the
-   PID already stored against that name in `fields.json`, and
-   auto-sanitizing each field's name into a valid canonical identifier
-   while keeping the original string as the label and as the SWDM lookup
-   name (item 2).
-3. `PSRegisterPropertySchema` the new file.
-4. Ensure `PropertyHandlers\.sldprt`/`.sldasm`/`.slddrw` point at our CLSID.
-   Revert (uninstall, or re-asserting after drift) always writes the
-   hardcoded original SolidWorks CLSID
-   (`{6A921E8A-C58C-4941-9E71-7946D9DCE941}`, confirmed identical across
-   the SW2019 and SW2020 installs on this machine - see item 8 above) - no
-   dynamic backup needed.
-5. Notify Explorer (`SHChangeNotify` or equivalent) so the change is
-   visible without a restart - **verify this actually works for property
-   schema changes specifically** (item 10 above); if it doesn't, document
-   that Explorer windows need reopening after Apply.
-- **Risk flagged for this phase:** repointing `PropertyHandlers` is a
-  system-wide change whose full blast radius isn't confirmed (see risk
-  discussion above) - test on a non-production machine/VM, not the real
-  machine, the first several times.
-- **Tests to pass before Phase 3 relies on it:** running Apply with a
-  sample field list produces well-formed `.propdesc` XML; Apply prompts for
-  elevation and fails gracefully if declined; `List-ExplorerColumns.ps1`
-  (already in this repo) shows the new field names appear as columns after
-  Apply; removing a field then re-running Apply makes that column
-  disappear from `List-ExplorerColumns.ps1`'s output too (proves the
-  unregister-before-overwrite ordering actually works, not just additive
-  registration); an already-open
-  Explorer window either picks up the new columns live or is confirmed not
-  to (item 10); an "undo"/revert run writes the hardcoded original
-  SolidWorks CLSID and unregisters our schema, after which
-  Description/OpenTime/LastSavedWith still work exactly as before any of
-  this ran.
+### Phase 2 - schema generation + elevated Apply tool - done, tested
+`SchemaApplyTool/` (own subfolder, same reasoning as `SwFilterDump`/
+`FieldListEditor`). WinForms, net48, with an `app.manifest` setting
+`requestedExecutionLevel level="requireAdministrator"` so Windows prompts
+for elevation the moment the exe is launched - **note: this only works
+when launched via `ShellExecute`** (double-click, or PowerShell
+`Start-Process -Verb RunAs`). Launching it via a plain `CreateProcess`
+call (e.g. backgrounding it from a bash shell) fails silently with
+`ERROR_ELEVATION_REQUIRED` instead of prompting - hit this directly while
+testing; the exe never even started, no UAC dialog appeared, no error
+visible either. Worth remembering for Phase 4's packaging/launch story.
+
+Three buttons, intentionally split so the risky step is isolated and
+explicit rather than bundled into one "Apply":
+- **Apply Schema** - reads `fields.json`; if our `.propdesc` already exists
+  on disk, calls `PSUnregisterPropertySchema` against the *old* content
+  first (skipped on a true first run); regenerates the XML (one shared
+  FMTID `{42161C84-EBEC-4753-9E00-9D700D9B4361}` - generated once this
+  session, now permanent, same pattern as SolidWorks's own schema; canonical
+  names are `SwSync.<sanitized field name>`, e.g. "Part Number" ->
+  `SwSync.PartNumber`, with the original string kept as the
+  `<labelInfo label="...">` text; every property `type="String"`, per item
+  3); writes the file; calls `PSRegisterPropertySchema`; sends
+  `SHChangeNotify(SHCNE_ASSOCCHANGED)`. Zero risk to SolidWorks's existing
+  columns - entirely our own separate schema/file.
+- **Test Repoint (temporary)** - logs the current `PropertyHandlers` CLSID
+  for all three extensions, then writes an obviously-fake placeholder
+  (`{00000000-0000-0000-0000-000000000000}`) to all three, for testing the
+  write mechanics without depending on a real handler (Phase 3 doesn't
+  exist yet).
+- **Revert PropertyHandlers** - writes the hardcoded original SolidWorks
+  CLSID (`{6A921E8A-C58C-4941-9E71-7946D9DCE941}`, item 8) back to all
+  three, then `SHChangeNotify`.
+
+**Tests passed, all against the real machine (no VM used - see "how this
+differed from the original plan" below):**
+- *Schema add/remove/re-add, verified via `List-ExplorerColumns.ps1`
+  column counts, not just assumed:* baseline 325 (pre-project) ->
+  **344** after Apply Schema with all 19 tracked fields (confirmed every
+  single field name - `Number` through `Status`, plus test additions -
+  appears as a new column); removed `Weight` from `fields.json` and
+  re-ran Apply Schema -> **343** (`Weight` gone, everything else intact -
+  proves the unregister-before-overwrite ordering actually removes a
+  dropped field, not just additively registers); restored `Weight` (new
+  PID 120, since the collapsed single-file design doesn't retain retired
+  PIDs - expected) and re-applied -> **344** again, `Weight` back.
+- *The repoint/revert cycle - the one test flagged as needing a VM in the
+  original plan, run for real instead (see below):* established a clean
+  baseline first through the **actual live Explorer property-resolution
+  path** (`(New-Object -ComObject Shell.Application).NameSpace(folder)
+  .ParseName(file).ExtendedProperty(...)`), not the `SwFilterDump`
+  `TestPropertyHandler` harness - that harness hardcodes the real CLSID
+  directly and bypasses the `PropertyHandlers` registry lookup entirely, so
+  it would never have reflected this test either way. Baseline: `Description
+  = WalkAir_WheelAxle`, `OpenTime = 0:01`, `LastSavedWith = SOLIDWORKS 2019`.
+  After **Test Repoint**: registry confirmed showing the placeholder CLSID;
+  all three properties cleanly returned **empty string** through the same
+  live query - no error, no crash, graceful degradation exactly as hoped.
+  After **Revert PropertyHandlers**: registry confirmed back to
+  `{6A921E8A-C58C-4941-9E71-7946D9DCE941}` on all three extensions; the
+  same query returned the **exact original baseline values** again. Full
+  round trip confirmed working in practice, not just in theory.
+- *Item 10 (live refresh) - resolved:* an already-open Explorer window did
+  **not** pick up the new columns in its "Choose Columns" list after Apply;
+  a brand-new tab/window opened afterward (no full `explorer.exe` restart)
+  **did** see them immediately. Low-severity, documented: after Apply,
+  open a new tab/window rather than expecting an already-open one to
+  refresh.
+
+**How this differed from the original plan:** the plan called for testing
+the `PropertyHandlers` repoint on a non-production machine/VM first, since
+it temporarily breaks Description/OpenTime/LastSavedWith on real SolidWorks
+files. No VM was available this session; ran it directly on the primary
+machine instead, with explicit confirmation before each risky step, a
+pre-established baseline to compare against, and the already-proven
+hardcoded-CLSID revert as the safety net. The breakage window was seconds
+long and fully confirmed reversible before moving on - judged an acceptable
+substitute for a VM in this specific case, not a precedent for skipping
+that caution on riskier future steps (e.g. Phase 4's full integration with
+a real, untested handler).
 
 ### Phase 3 - the property handler itself
 C# COM component (SharpShell likely, for the .NET COM registration
