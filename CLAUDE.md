@@ -439,6 +439,8 @@ reports (see "SOLVED" above), without touching that DLL at all:
 formula-link string for a linked property (e.g. `Material` ->
 `"SW-Material@...SLDPRT"`), matching what `ReadSwProperties` already showed.
 But `ISwDMDocument25.GetCustomPropertyValues(name, out type, out linkedTo)`
+(also available on `ISwDMDocument23`, which the handler now uses for SW2019
+compatibility - see "Known gaps" below)
 returns the **resolved** value directly - tested against `Material` and got
 `"10B21"`, with `linkedTo` holding the raw formula string separately. This
 is the exact same resolved value the `IFilter` dump needed driving
@@ -1062,8 +1064,19 @@ removed as redundant - only `Number`, `Material`, `Thickness`, `Category`,
   entries in the column chooser.
 
 ### Known gaps / follow-ups not yet built
-- **Deployment to the work computer** hasn't happened yet - everything
-  above is verified on the non-production test machine only.
+- **Deployment to the work computer - first deployment done, working.**
+  The work computer has only SolidWorks 2019, and the first deploy didn't
+  work there: the handler cast its document to `ISwDMDocument25`, an
+  interface newer than SW2019's Document Manager provides. The test machine
+  never showed this because its SW2020 install does provide it. A failed
+  `as` cast returns null, so `TryOpenDocument` "failed" quietly and every
+  property came back blank, with no error anywhere. Goren fixed it
+  (`10555fa`) by targeting `ISwDMDocument23` instead, which SW2019 supports
+  and which still has `GetCustomPropertyValues` and `GetFileAvgTime`. That
+  version works on the work computer. **Rule going forward:** target the
+  oldest `ISwDMDocumentNN` that has the needed methods, not the newest one
+  the local interop DLL exposes, and test on the oldest SolidWorks version
+  you need to support.
 - **Config-file-based license key for wider binary distribution** - raised
   while prepping the repo to go public (see README's license-key section).
   Not built: `SwPropertyHandler` still needs the key compiled in, so a
