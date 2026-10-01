@@ -327,12 +327,21 @@ sortable/filterable columns in Windows Explorer.
   list editor as before; its "Apply Changes" and "Uninstall" buttons
   re-launch the same exe elevated (`Verb="runas"`, a `--apply`/
   `--uninstall` command-line flag) rather than requiring elevation just to
-  open the editor - the elevated relaunch shows an auto-closing log window
-  (`ElevatedActionForm`) rather than needing a manual close click on
-  success (stays open on an actual `ERROR`-prefixed failure so there's
-  something to read; a bare non-empty stderr isn't treated as failure,
-  since `regasm /codebase` routinely warns there on a non-strong-named
-  assembly like ours - that warning is benign, not a sign anything failed).
+  open the editor - the elevated relaunch is plain console output
+  (`AllocConsole` + `Console.WriteLine`), not a WinForms window: this exe
+  stays `WinExe` so the everyday editor launch never flashes a console, but
+  the elevated action attaches one on demand. **Revised mid-session** from
+  an initial `ElevatedActionForm` (a WinForms log window with a `Timer`
+  that auto-closed on success, stayed open on failure) - Goren's call that
+  a console window is a better fit for a short, scripted admin action: it
+  closes naturally the moment `Main` returns, no "did it succeed, should I
+  auto-close" logic to maintain at all - only pausing with
+  `Console.ReadKey()` on an actual `ERROR`-prefixed failure so there's
+  something to read. A bare non-empty stderr still isn't treated as
+  failure either way, since `regasm /codebase` routinely warns there on a
+  non-strong-named assembly like ours - that warning is benign, not a sign
+  anything failed (this caused the WinForms version to never auto-close
+  until that check was narrowed to the explicit `ERROR` prefix only).
   `InstallActions.cs` consolidates what used to be 3 separate manual steps
   (hand-run `regasm`, click Apply Schema, click Repoint to Real Handler)
   into one idempotent `Apply()`. Carries `ColumnLookup.cs` (Issue 2's
