@@ -23,22 +23,18 @@ namespace SwColumnManager
 
         private const string HandlerDllName = "SwPropertyHandler.dll";
 
-        // Not a direct dependency of this project - only copied because the
-        // handler needs it at runtime. .NET resolves a COM-hosted assembly's
-        // own references from *its own* directory, not explorer.exe's or
-        // anywhere else - confirmed the hard way: installing the handler
-        // without this file present left it silently non-functional (every
-        // property came back blank, even though every registry entry looked
-        // correct) until this was added.
-        private const string InteropDllName = "SolidWorks.Interop.swdocumentmgr.dll";
+        // No longer installed: SolidWorks's interop DLL can't be redistributed,
+        // so the handler embeds the SWDM interop types it needs
+        // (EmbedInteropTypes in SwPropertyHandler.csproj) and has no runtime
+        // dependency on this file. Older versions of this tool *did* copy it
+        // here, though, so Apply/Uninstall still delete any leftover copy.
+        private const string LegacyInteropDllName = "SolidWorks.Interop.swdocumentmgr.dll";
 
         private static readonly string InstalledHandlerDllPath = Path.Combine(InstallDir, HandlerDllName);
-        private static readonly string InstalledInteropDllPath = Path.Combine(InstallDir, InteropDllName);
+        private static readonly string LegacyInteropDllPath = Path.Combine(InstallDir, LegacyInteropDllName);
 
         private static readonly string SourceHandlerDllPath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory, HandlerDllName);
-        private static readonly string SourceInteropDllPath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, InteropDllName);
 
         private static readonly string ConfigDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
@@ -52,13 +48,11 @@ namespace SwColumnManager
             log($"Install directory: {InstallDir}");
             Directory.CreateDirectory(InstallDir);
 
-            log("--- Step 1: install the property handler DLL and its dependency ---");
+            log("--- Step 1: install the property handler DLL ---");
             try
             {
                 File.Copy(SourceHandlerDllPath, InstalledHandlerDllPath, overwrite: true);
                 log($"Copied handler to {InstalledHandlerDllPath}");
-                File.Copy(SourceInteropDllPath, InstalledInteropDllPath, overwrite: true);
-                log($"Copied {InteropDllName} to {InstalledInteropDllPath}");
             }
             catch (IOException ex)
             {
@@ -67,6 +61,8 @@ namespace SwColumnManager
                 log("install), close Explorer windows or restart explorer.exe and try again.");
                 return;
             }
+
+            DeleteLegacyInteropDll(log);
 
             var regResult = RunProcess(RegAsmPath, $"\"{InstalledHandlerDllPath}\" /codebase");
             log($"regasm /codebase exit code: {regResult.ExitCode}");
@@ -145,18 +141,7 @@ namespace SwColumnManager
                     log($"Could not delete the handler DLL (likely still loaded by explorer.exe): {ex.Message}");
                 }
 
-                if (File.Exists(InstalledInteropDllPath))
-                {
-                    try
-                    {
-                        File.Delete(InstalledInteropDllPath);
-                        log($"Deleted {InstalledInteropDllPath}");
-                    }
-                    catch (IOException ex)
-                    {
-                        log($"Could not delete {InteropDllName}: {ex.Message}");
-                    }
-                }
+                DeleteLegacyInteropDll(log);
             }
             else
             {
@@ -167,6 +152,21 @@ namespace SwColumnManager
             log("");
             log("Uninstall finished. fields.json and knownColumns.json were left in place");
             log("(your tracked field list) - delete them by hand if you want a totally clean slate.");
+        }
+
+        private static void DeleteLegacyInteropDll(Action<string> log)
+        {
+            if (!File.Exists(LegacyInteropDllPath)) return;
+
+            try
+            {
+                File.Delete(LegacyInteropDllPath);
+                log($"Deleted leftover {LegacyInteropDllPath} from an older install");
+            }
+            catch (IOException ex)
+            {
+                log($"Could not delete leftover {LegacyInteropDllName}: {ex.Message}");
+            }
         }
 
         private static Dictionary<string, int> LoadFields()

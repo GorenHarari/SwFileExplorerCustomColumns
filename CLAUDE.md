@@ -357,8 +357,9 @@ sortable/filterable columns in Windows Explorer.
   (hand-run `regasm`, click Apply Schema, click Repoint to Real Handler)
   into one idempotent `Apply()`. Carries `ColumnLookup.cs` (Issue 2's
   `IShellFolder2` interop) and a `ProjectReference` to `SwPropertyHandler`
-  purely so MSBuild copies the handler DLL (and its `SolidWorks.Interop.
-  swdocumentmgr.dll` dependency) into this project's own output folder -
+  purely so MSBuild copies the handler DLL into this project's own output
+  folder (no SolidWorks DLL comes along any more - see "SolidWorks interop
+  DLL no longer redistributed" below) -
   "Apply" then copies that bundled DLL to
   `%ProgramFiles%\SwFileExplorerCustomColumns\SwPropertyHandler.dll` and
   registers *that* path via `regasm /codebase`, not a dev-repo path.
@@ -1118,6 +1119,42 @@ on Uninstall. Re-verified the full cycle after the fix: clean uninstall of
 the broken state, fresh Apply, confirmed both files present, confirmed live
 resolution correct across two different real fixture files (new-column and
 legacy properties both resolving correctly), clean uninstall again.
+**Superseded by the next section** - the interop DLL is no longer copied at
+all; the handler no longer needs it at runtime.
+
+### SolidWorks interop DLL no longer redistributed (session 6) - done, tested
+We're not allowed to publish/deploy SolidWorks DLLs, but the fix above
+made Apply install `SolidWorks.Interop.swdocumentmgr.dll` into Program
+Files, and the build bundled it next to `SwColumnManager.exe`.
+
+**Fix:** `SwPropertyHandler.csproj`'s reference to that DLL is now
+`EmbedInteropTypes=true` + `Private=false` ("No-PIA"). The build still
+compiles against the builder's own locally installed copy (same
+`HintPath`), but the compiler embeds just the SWDM interfaces/enums the
+handler uses into `SwPropertyHandler.dll` itself. At runtime the handler
+talks straight to the end user's own registered SWDM COM server - no
+interop DLL needed anywhere, so the original "silently blank" bug can't
+come back. `InstallActions.cs` no longer copies it; Apply and Uninstall
+both delete a leftover copy from an older install
+(`DeleteLegacyInteropDll`).
+
+**Verified:**
+- Clean rebuild: output folders for `SwColumnManager` and
+  `SwPropertyHandlerTest` contain no SolidWorks DLL.
+- `SwPropertyHandler.dll`'s referenced assemblies are only `mscorlib`,
+  `System.Web.Extensions`, `System.Core` - the interop reference is gone.
+- Full elevated Apply -> Uninstall cycle on this machine (with
+  `fields.json` = `{"Material":100}`): Program Files held only
+  `SwPropertyHandler.dll`; live Explorer resolution correct on a part,
+  assembly, and drawing (`SwSync.Material = 'AISI 316 Stainless Steel Sheet
+  (SS)'`, Description, LastSavedWith, OpenTime in our `'0 mins 01 secs'`
+  format proving our handler served it). Uninstall fully clean
+  (`PropertyHandlers` back to `{6A921E8A-...}`, CLSID gone, schema gone,
+  OpenTime back to SolidWorks's own `'0:01'`).
+
+**Not yet tested:** the leftover-DLL cleanup path (no older install was
+present to clean up), and the SW2019 work computer - expected to work since
+the code still targets `ISwDMDocument23`, but unproven there.
 
 **Minor, non-blocking edge cases noted while reviewing, not acted on:**
 - `SchemaGenerator.BuildCanonicalName`'s sanitizer falls back to the literal

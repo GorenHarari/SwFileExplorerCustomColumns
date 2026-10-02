@@ -87,9 +87,14 @@ dotnet build SwColumnManager -c Release
 ```
 
 This also builds `SwPropertyHandler` (a project reference) and copies its
-DLL, plus its `SolidWorks.Interop.swdocumentmgr.dll` dependency, next to
-`SwColumnManager.exe` automatically. If `SolidWorks.Interop.swdocumentmgr
-.dll` isn't where `SwPropertyHandler.csproj`'s `HintPath` expects
+DLL next to `SwColumnManager.exe` automatically. The build compiles against
+**your own** SolidWorks install's `SolidWorks.Interop.swdocumentmgr.dll`,
+but that DLL is never copied into the output or installed anywhere -
+SolidWorks DLLs can't be redistributed, so the handler embeds the few
+Document Manager interop types it uses (`EmbedInteropTypes`) and at runtime
+talks directly to the Document Manager that's already installed with
+SolidWorks on that machine. If `SolidWorks.Interop.swdocumentmgr.dll` isn't
+where `SwPropertyHandler.csproj`'s `HintPath` expects
 (`C:\Program Files\Common Files\SOLIDWORKS Shared\...`), fix that path to
 wherever your install actually put it.
 

@@ -15,9 +15,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Compiled against the builder's own locally installed SolidWorks copy,
+         but never redistributed: EmbedInteropTypes copies just the SWDM
+         interfaces/enums this handler uses into SwPropertyHandler.dll itself
+         ("No-PIA"), so there's no runtime dependency on this DLL at all - the
+         handler talks straight to the end user's own registered SWDM COM
+         server. Private=false keeps MSBuild from copying it to bin/ either. -->
     <Reference Include="SolidWorks.Interop.swdocumentmgr">
       <HintPath>C:\Program Files\Common Files\SOLIDWORKS Shared\SolidWorks.Interop.swdocumentmgr.dll</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+      <Private>false</Private>
     </Reference>
     <!-- Built into .NET Framework - no NuGet package needed for simple JSON read/write. -->
     <Reference Include="System.Web.Extensions" />
