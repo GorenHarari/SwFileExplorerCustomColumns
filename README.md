@@ -83,8 +83,14 @@ property handler needs a compiled constant for reasons explained in
 ## Building
 
 ```powershell
-dotnet build SwColumnManager -c Release
+dotnet build SwFileExplorerCustomColumns.sln -c Release
 ```
+
+Or open `SwFileExplorerCustomColumns.sln` in Visual Studio and build it in
+the Release configuration. The solution holds only the two projects that
+make up the shipped tool (`SwColumnManager` and `SwPropertyHandler`) - the
+other folders in this repo are research/test tools and aren't needed to
+build or use it. The output lands in `SwColumnManager\bin\Release\net48\`.
 
 This also builds `SwPropertyHandler` (a project reference) and copies its
 DLL next to `SwColumnManager.exe` automatically. The build compiles against
