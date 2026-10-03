@@ -4,6 +4,86 @@
 Get SolidWorks (.sldprt / .sldasm / .slddrw) custom properties to show up as
 sortable/filterable columns in Windows Explorer.
 
+## NEXT SESSION: continue on the work computer (handoff written session 7)
+**If you're Claude running on the work computer, start here.** Everything
+up to commit `f21390f` was built and tested on Goren's test machine (SW2019
++ SW2020 side by side). The work computer is the **production** machine:
+**SolidWorks 2019 only**, and it already has an older install of this tool
+from the first deployment (`10555fa` era, before sessions 6-7). Ask Goren
+before every step that changes the system (Apply, Uninstall, registry
+edits) - same discipline as the rest of this project.
+
+Background for these steps: "SolidWorks interop DLL no longer
+redistributed (session 6)" and "End goal (session 7)" further down.
+
+**Step 0 - set up and build**
+1. `git pull`. Make sure `SwPropertyHandler\LicenseKey.cs` exists. It's
+   git-ignored, so it never comes with the pull. If it's missing, Goren
+   creates it from `LicenseKey.cs.example` (README, "Getting your own
+   Document Manager API license key"). Never print or commit the key.
+2. `dotnet build SwFileExplorerCustomColumns.sln -c Release`. Check that
+   `SwColumnManager\bin\Release\net48\` has `SwColumnManager.exe`,
+   `SwPropertyHandler.dll`, and `swdocumentmgr.dll`, and record the
+   bundled DLL's file version (expected 27.x, SW2019). Note: this machine's
+   build bundles the **2019** Document Manager. That's fine for these
+   tests, but a public release should bundle the 2020 one (end goal: files
+   up to SW2020) - build releases on the test machine or with
+   `-p:SwDocumentMgrPath=<path to 2020 swdocumentmgr.dll>`.
+
+**Step 1 - record the state before touching anything**
+- Does `%ProgramFiles%\SwFileExplorerCustomColumns\` exist, and what's in
+  it? In particular, is `SolidWorks.Interop.swdocumentmgr.dll` there? The
+  session-5 install copied it, so it probably is. That lets Step 2 test the
+  never-yet-exercised leftover cleanup (`DeleteLegacyInteropDll`).
+- `PropertyHandlers\.sldprt` / `.sldasm` / `.slddrw` values (ours is
+  `{E558E17D-51E7-4043-89D8-5EDB8498454F}`, SolidWorks's is
+  `{6A921E8A-C58C-4941-9E71-7946D9DCE941}`).
+- Where the Document Manager is registered: `HKCR\CLSID\
+  {00AB5D8D-2B8F-416b-9761-92FACC8872BE}\InprocServer32`. It should be
+  SolidWorks's own `...\SOLIDWORKS Shared\swdocumentmgr.dll`.
+
+**Step 2 - Apply the new build (closes open item: interop-free build on
+SW2019, untested since `5fae551`)**
+- Run `.\SwColumnManager.exe --pause` from the build output folder, click
+  Apply Changes, approve UAC. Goren reads the console to you, since you
+  can't see the elevated window. Expected:
+  - Step 1: `Document Manager already registered (SolidWorks's own copy):
+    ... - leaving it alone`. Nothing copied or registered by us.
+  - Step 2: `Copied handler to ...`, and if the old interop DLL was there,
+    `Deleted leftover ... from an older install`.
+  - No line starting with `ERROR`.
+- Verify afterwards: `%ProgramFiles%\SwFileExplorerCustomColumns\` holds
+  only `SwPropertyHandler.dll`. `PropertyHandlers` shows our CLSID. The
+  Document Manager registration is unchanged from Step 1.
+- Verify live values through the real Explorer path, not the test harness:
+  `(New-Object -ComObject Shell.Application).NameSpace(<folder>)
+  .ParseName(<file>).ExtendedProperty('<canonical name>')` on a real
+  SW2019 part, assembly, and drawing. Check a tracked field
+  (`SwSync.<Name>`), `Solidworks.Document.Description`, `...LastSavedWith`,
+  and `...OpenTime`. OpenTime in our format (`'0 mins 01 secs'`, not
+  `'0:01'`) proves our handler is serving it. Then have Goren look at a
+  real Explorer window too.
+- If anything comes back blank, check `TryOpenDocument` first. The
+  `ISwDMDocument23` lesson (see "Known gaps") is the most likely kind of
+  failure on SW2019.
+
+**Step 3 - leave it installed.** This is the production machine. Don't run
+Uninstall unless Goren asks or something is wrong. Uninstall is the revert
+if it is: `PropertyHandlers` goes back to `{6A921E8A-...}`.
+
+**Step 4 (optional, only if Goren wants it) - older Document Manager on
+newer files.** The work computer has the 2019 `swdocumentmgr.dll` this
+test needs (see "Open question (session 7)" under "End goal"). It needs a
+new test mode (`LoadLibrary` + `DllGetClassObject` on the 2019 DLL, without
+registering it) and a few SW2020-saved files copied over from the test
+machine (`E:\for testing\A-EYE 2020\`). Not needed for the files-up-to-2020
+goal, since the release bundles the 2020 DLL.
+
+**Step 5 - record results.** Update this file: mark item 9 ("Not yet
+tested: ... the SW2019 work computer") and the leftover-DLL cleanup as
+tested or failed, with what was seen. Then rewrite or remove this NEXT
+SESSION section. Commit and push so the test machine picks it up.
+
 ## Background / what we've learned so far (mechanism now fully confirmed)
 - **Correction: SolidWorks files are NOT OLE structured-storage (compound
   binary) files**, at least not for SW2019+ parts - this was the original
