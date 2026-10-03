@@ -20,8 +20,8 @@ SolidWorks install already covers everything below except the license key.
 
 ### To build it (once, on one machine)
 
-- Windows, plus the .NET SDK or Visual Studio with .NET Framework 4.8
-  support.
+- Windows, plus the .NET SDK or Visual Studio, and the **.NET Framework 4.8
+  Developer Pack** (the targeting pack the projects compile against).
 - `SolidWorks.Interop.swdocumentmgr.dll` - needed only to compile, not at
   runtime. A SolidWorks install puts it in
   `C:\Program Files\Common Files\SOLIDWORKS Shared\` (see
@@ -150,8 +150,12 @@ exist yet - go back to the previous section.
    header -> "More...".
 5. To remove a field later: select it in the list, click **Remove**, then
    **Apply Changes** again to push the change live.
-6. **Uninstall** reverts everything - Explorer's columns go back to exactly
-   what SolidWorks's own installer set up, as if this tool had never run.
+6. **Uninstall** reverts the system changes - Explorer's columns go back to
+   exactly what SolidWorks's own installer set up. It deliberately leaves
+   your field list (`fields.json` and `knownColumns.json` in
+   `%ProgramData%\SwFileExplorerCustomColumns\`) and an empty
+   `%ProgramFiles%\SwFileExplorerCustomColumns\` folder; delete those by
+   hand for a completely clean slate.
 
 To read the Apply/Uninstall log even when nothing failed, start the tool
 with `--pause` (in PowerShell, from the exe's folder:
@@ -167,8 +171,8 @@ rather than requiring admin rights just to open the editor - standard
 "elevate only when actually needed" behavior. The elevated run shows plain
 console output and closes itself.
 
-Windows ships hundreds of generic
-ones (Authors, Company, Status, Owner, Priority, Color, and so on). The
+Explorer already has hundreds of built-in columns (Authors, Company,
+Status, Owner, Priority, Color, and so on). The
 property handler checks, for every custom property on every file, whether
 its name matches one of those - if it does, it's served under that
 existing column automatically, live, no configuration at all. The field
@@ -177,12 +181,16 @@ match** (Material and Thickness are common examples) - those get a
 genuinely new column, minted under this tool's own schema.
 
 **What "Apply Changes" actually does, in order:**
-1. Installs the property handler DLL to
+1. Makes sure a SolidWorks Document Manager is registered. If SolidWorks's
+   own copy is, it's left alone; if none is, the bundled copy is installed
+   to `%ProgramFiles%\SwFileExplorerCustomColumns\` and registered
+   (`regsvr32`). If neither is available, Apply stops here.
+2. Installs the property handler DLL to
    `%ProgramFiles%\SwFileExplorerCustomColumns\` and registers it as a COM
    server (`regasm /codebase`).
-2. Builds and registers a small property schema (`.propdesc`) covering just
+3. Builds and registers a small property schema (`.propdesc`) covering just
    the tracked fields that need a brand-new column.
-3. Points `.sldprt`/`.sldasm`/`.slddrw` at the new handler in the registry
+4. Points `.sldprt`/`.sldasm`/`.slddrw` at the new handler in the registry
    (`HKLM\...\PropertySystem\PropertyHandlers`), replacing SolidWorks's own
    entry.
 
@@ -201,9 +209,11 @@ directly - no need for SolidWorks itself to be running, and it works fine
 even if the file is read-only or currently open in a live SolidWorks
 session.
 
-**Uninstall** reverses all three Apply steps: the registry key goes back to
+**Uninstall** reverses all four Apply steps: the registry key goes back to
 SolidWorks's original handler, the custom schema is unregistered and
-deleted, and the handler DLL is unregistered and removed.
+deleted, the handler DLL is unregistered and removed, and the bundled
+Document Manager is unregistered and removed - only if Apply registered
+it, never SolidWorks's own copy.
 
 ## SolidWorks's native Explorer-column structure, explained
 
@@ -213,10 +223,13 @@ documented public COM interfaces, and binary string-scanning; see
 all version) went into understanding what SolidWorks already does, so this
 tool could replace it correctly rather than guess.
 
-- **Modern SolidWorks files (2019+) are not OLE structured-storage
-  files.** The original assumption going in was that they were (like old
-  Office documents) - checked directly: the file's first 8 bytes don't
-  match the OLE signature, and `StgOpenStorage` fails on it outright.
+- **Modern SolidWorks files are not OLE structured-storage files.** The
+  original assumption going in was that they were (like old Office
+  documents) - checked directly on a SolidWorks 2019 part: the file's first
+  8 bytes don't match the OLE signature, and `StgOpenStorage` fails on it
+  outright. Related: SolidWorks's Document Manager help says that starting
+  with SolidWorks 2015, third-party data stored in SolidWorks files can't
+  be read with standard structured-storage techniques.
   Whatever SolidWorks's internal format is now, it's proprietary.
 - **The real mechanism is a generic Windows table, not something
   SolidWorks-specific.** `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\
@@ -232,11 +245,11 @@ tool could replace it correctly rather than guess.
   6 generic Windows ones (`Title`/`Author`/`Subject`/`Comment`/`Keywords`/
   `Rating`). It never reports Material, Weight, or anything else - not a
   bug, just a narrow, fixed list compiled into the DLL.
-- **Separately, SolidWorks registers a `.propdesc` schema** defining ~22
+- **Separately, SolidWorks registers a `.propdesc` schema** defining 21
   `Solidworks.Document.*` properties (Material, Number, Project, ...),
   all technically queryable - but only 3 of them have the `<labelInfo>`
   element that makes a property selectable as an Explorer column at all,
-  which is why the other ~19 are invisible in "Choose Columns" regardless
+  which is why the other 18 are invisible in "Choose Columns" regardless
   of the handler above.
 - **The values behind those 9 properties come from different places**:
   `Description` happens to be a literal custom property of that exact name
