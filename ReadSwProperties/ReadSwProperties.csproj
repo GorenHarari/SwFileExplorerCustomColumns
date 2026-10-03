@@ -31,4 +31,9 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Same git-ignored license key file the property handler compiles in. -->
+    <Compile Include="..\SwPropertyHandler\LicenseKey.cs" Link="LicenseKey.cs" />
+  </ItemGroup>
+
 </Project>

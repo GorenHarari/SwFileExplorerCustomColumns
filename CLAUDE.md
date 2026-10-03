@@ -247,12 +247,12 @@ sortable/filterable columns in Windows Explorer.
   (`SolidWorks.Interop.swdocumentmgr`), independent of Explorer. **Built and
   run successfully** against the (now-removed, see above) test part.
   Required fixes, now done:
-  1. Document Manager API license key supplied. The key is **not** in source -
-     `Program.cs` reads it at runtime from the `SWDM_LICENSE_KEY` environment
-     variable, and the key itself (plus the exact commands to set it) lives in
-     `SwDmLicenseKey.md`, which `.gitignore` excludes. **Read that file when a
-     run of this app needs the key**, and set the variable for that shell only -
-     never paste the key back into a tracked file, a commit, or terminal output.
+  1. Document Manager API license key supplied. **Changed (session 7):** no
+     longer the `SWDM_LICENSE_KEY` environment variable - `ReadSwProperties.csproj`
+     now compiles in the same git-ignored `SwPropertyHandler\LicenseKey.cs`
+     the handler uses (linked `<Compile>`), so there's one key mechanism
+     repo-wide. Never paste the key into a tracked file, a commit, or
+     terminal output.
   2. `HintPath` in `ReadSwProperties.csproj` corrected to
      `C:\Program Files\Common Files\SOLIDWORKS Shared\SolidWorks.Interop.swdocumentmgr.dll`
      (the guessed default path was wrong).
@@ -293,7 +293,8 @@ sortable/filterable columns in Windows Explorer.
   as x64 / net48.
 - `SwDmLicenseKey.md` - **secret, git-ignored.** Holds the SolidWorks Document
   Manager API license key and how to set `SWDM_LICENSE_KEY` from it. Not in the
-  repo; exists only on this machine.
+  repo; exists only on this machine. Nothing reads `SWDM_LICENSE_KEY` any
+  more (session 7) - kept only as a local copy of the key.
 - ~~`FieldListEditor/`~~ - **removed (session 5), superseded by
   `SwColumnManager/`** below. Was Phase 1's unprivileged WinForms list
   editor (Add/Remove) for `fields.json`. Kept here as a record: built, run,

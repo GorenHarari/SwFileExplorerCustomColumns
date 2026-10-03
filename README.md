@@ -99,20 +99,6 @@ files just show blank columns. After upgrading to a new major SolidWorks
 release, request a new key, put it in `LicenseKey.cs`, rebuild, and run
 Apply again.
 
-`ReadSwProperties`/`SwFilterDump` (the dev/research tools - see below) use
-a *different* mechanism for the same key - an environment variable
-(`SWDM_LICENSE_KEY`), set with:
-
-```powershell
-$env:SWDM_LICENSE_KEY = '<your key>'
-```
-
-rather than a compiled constant. Both read the exact same kind of key;
-which mechanism applies depends only on which tool you're running (the
-property handler needs a compiled constant for reasons explained in
-"How this tool works" below - a property handler loaded into
-`explorer.exe` can't reliably see environment variables).
-
 ## Building
 
 ```powershell
@@ -283,9 +269,8 @@ than day-to-day use.
   for "does a column with this exact name exist."
 - **`ReadSwProperties/`** - a small console app reading a SolidWorks file's custom
   properties directly via the Document Manager API, independent of
-  Explorer entirely. Needs `SWDM_LICENSE_KEY` set as an environment
-  variable (a different approach from `SwPropertyHandler`'s baked-in
-  constant - this one predates that decision). Used throughout to confirm
+  Explorer entirely. Compiles in the same `SwPropertyHandler\LicenseKey.cs`
+  as the handler. Used throughout to confirm
   what a file's custom properties actually are, directly from the source.
 - **`SwFilterDump/`** - drives `sldsearchifilter.dll`'s `IFilter` COM
   interface directly (the same low-level mechanism the Windows Search

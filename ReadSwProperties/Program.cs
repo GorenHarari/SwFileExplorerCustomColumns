@@ -5,17 +5,11 @@ namespace ReadSwProperties
 {
     class Program
     {
-        // The Document Manager API license key is NOT stored in source - it's a
-        // secret and this file is in git. It's read at runtime from the
-        // SWDM_LICENSE_KEY environment variable; the key itself (and how to set
-        // it) lives in SwDmLicenseKey.md, which .gitignore excludes.
-        // The key is separate from a normal SolidWorks license - it's requested
-        // from the SOLIDWORKS Customer Portal against your serial number
-        // (search the portal for "Document Manager API license key"; ask your
-        // reseller/VAR if you can't find the request form). Without a valid
-        // key, GetApplication() below returns null.
-        private const string LicenseKeyVariable = "SWDM_LICENSE_KEY";
-
+        // The Document Manager API license key comes from the same git-ignored
+        // SwPropertyHandler\LicenseKey.cs the property handler uses (compiled
+        // in via a linked file in ReadSwProperties.csproj) - see the README's
+        // license key section. Without a valid key, GetApplication() below
+        // returns null.
         static void Main(string[] args)
         {
             if (args.Length < 1)
@@ -26,24 +20,15 @@ namespace ReadSwProperties
 
             string filePath = args[0];
 
-            string licenseKey = Environment.GetEnvironmentVariable(LicenseKeyVariable);
-            if (string.IsNullOrWhiteSpace(licenseKey))
-            {
-                Console.WriteLine("No Document Manager license key found.");
-                Console.WriteLine("Set the " + LicenseKeyVariable + " environment variable first");
-                Console.WriteLine("(see SwDmLicenseKey.md for the key and the exact command).");
-                return;
-            }
-
             // --- Step 1: connect to the Document Manager API ---
             var classFactory = (SwDMClassFactory)Activator.CreateInstance(
                 Type.GetTypeFromProgID("SwDocumentMgr.SwDMClassFactory"));
 
-            ISwDMApplication swDmApp = classFactory.GetApplication(licenseKey);
+            ISwDMApplication swDmApp = classFactory.GetApplication(SwPropertyHandler.LicenseKey.Value);
             if (swDmApp == null)
             {
                 Console.WriteLine("Could not start the Document Manager application.");
-                Console.WriteLine("Most likely cause: an invalid " + LicenseKeyVariable + " value.");
+                Console.WriteLine("Most likely cause: an invalid key in SwPropertyHandler\\LicenseKey.cs.");
                 return;
             }
 
