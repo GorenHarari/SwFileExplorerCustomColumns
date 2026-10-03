@@ -263,7 +263,7 @@ namespace SwColumnManager
 
             try
             {
-                var psi = new ProcessStartInfo(Application.ExecutablePath, arg)
+                var psi = new ProcessStartInfo(Application.ExecutablePath, Program.Pause ? arg + " --pause" : arg)
                 {
                     UseShellExecute = true,
                     Verb = "runas"

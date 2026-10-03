@@ -23,8 +23,8 @@ namespace SwColumnManager
 
         private const string HandlerDllName = "SwPropertyHandler.dll";
 
-        // No longer installed: SolidWorks's interop DLL can't be redistributed,
-        // so the handler embeds the SWDM interop types it needs
+        // No longer installed: SolidWorks's interop DLL isn't on SolidWorks's
+        // list of redistributable files, so the handler embeds the SWDM interop types it needs
         // (EmbedInteropTypes in SwPropertyHandler.csproj) and has no runtime
         // dependency on this file. Older versions of this tool *did* copy it
         // here, though, so Apply/Uninstall still delete any leftover copy.
@@ -48,7 +48,13 @@ namespace SwColumnManager
             log($"Install directory: {InstallDir}");
             Directory.CreateDirectory(InstallDir);
 
-            log("--- Step 1: install the property handler DLL ---");
+            log("--- Step 1: make sure a SolidWorks Document Manager is registered ---");
+            if (!DocumentManagerSetup.EnsureRegistered(InstallDir, log))
+            {
+                return;
+            }
+
+            log("--- Step 2: install the property handler DLL ---");
             try
             {
                 File.Copy(SourceHandlerDllPath, InstalledHandlerDllPath, overwrite: true);
@@ -68,7 +74,7 @@ namespace SwColumnManager
             log($"regasm /codebase exit code: {regResult.ExitCode}");
             LogProcessOutput(log, regResult);
 
-            log("--- Step 2: generate and register the property schema ---");
+            log("--- Step 3: generate and register the property schema ---");
             var fields = LoadFields();
             if (fields.Count == 0)
             {
@@ -88,7 +94,7 @@ namespace SwColumnManager
             int regSchemaResult = NativeMethods.PSRegisterPropertySchema(SchemaPath);
             log($"PSRegisterPropertySchema (new schema) -> 0x{regSchemaResult:X8}");
 
-            log("--- Step 3: point PropertyHandlers at the real handler ---");
+            log("--- Step 4: point PropertyHandlers at the real handler ---");
             foreach (string ext in PropertyHandlerRegistry.Extensions)
             {
                 PropertyHandlerRegistry.SetClsid(ext, RealHandlerClsid);
@@ -147,6 +153,9 @@ namespace SwColumnManager
             {
                 log("No installed handler DLL found - nothing to unregister.");
             }
+
+            log("--- Step 4: remove the bundled Document Manager, if this tool registered it ---");
+            DocumentManagerSetup.RemoveIfOurs(InstallDir, log);
 
             NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, NativeMethods.SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
             log("");

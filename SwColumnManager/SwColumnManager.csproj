@@ -29,4 +29,22 @@
     <ProjectReference Include="..\SwPropertyHandler\SwPropertyHandler.csproj" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- The builder's own SolidWorks Document Manager, same folder as the
+         interop DLL's HintPath in SwPropertyHandler.csproj. Bundled next to
+         this exe (never committed to the repo) so "Apply Changes" can
+         register it on a machine with no SolidWorks - see
+         DocumentManagerSetup.cs. Override on the command line to bundle a
+         different copy: -p:SwDocumentMgrPath=... -->
+    <SwDocumentMgrPath Condition="'$(SwDocumentMgrPath)' == ''">C:\Program Files\Common Files\SOLIDWORKS Shared\swdocumentmgr.dll</SwDocumentMgrPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(SwDocumentMgrPath)" Link="swdocumentmgr.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(SwDocumentMgrPath)')" />
+  </ItemGroup>
+
+  <Target Name="WarnMissingSwDocumentMgr" BeforeTargets="Build" Condition="!Exists('$(SwDocumentMgrPath)')">
+    <Warning Text="swdocumentmgr.dll not found at '$(SwDocumentMgrPath)' - it won't be bundled, so Apply will only work on machines that already have a registered Document Manager (i.e. SolidWorks installed)." />
+  </Target>
+
 </Project>

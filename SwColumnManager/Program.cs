@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -9,9 +10,17 @@ namespace SwColumnManager
         [DllImport("kernel32.dll")]
         private static extern bool AllocConsole();
 
+        // Testing aid: keeps the Apply/Uninstall console open even on success
+        // so the log can be read. Given to the editor launch
+        // (SwColumnManager.exe --pause), it's passed on to the elevated
+        // relaunch its buttons start.
+        public static bool Pause { get; private set; }
+
         [STAThread]
         static void Main(string[] args)
         {
+            Pause = args.Any(a => a.Equals("--pause", StringComparison.OrdinalIgnoreCase));
+
             if (args.Length > 0 && (args[0].Equals("--apply", StringComparison.OrdinalIgnoreCase) ||
                                      args[0].Equals("--uninstall", StringComparison.OrdinalIgnoreCase)))
             {
@@ -32,7 +41,7 @@ namespace SwColumnManager
         // flashes a console window) means the window just closes naturally
         // when Main returns, with no "did it succeed, should I auto-close"
         // logic to maintain - only pausing on an actual failure so there's
-        // something to read.
+        // something to read (or always, with --pause).
         private static void RunElevatedAction(string arg)
         {
             AllocConsole();
@@ -63,7 +72,7 @@ namespace SwColumnManager
                 log($"ERROR: {ex.GetType().Name}: {ex.Message}");
             }
 
-            if (hadError)
+            if (hadError || Pause)
             {
                 Console.WriteLine();
                 Console.WriteLine("Press any key to close...");

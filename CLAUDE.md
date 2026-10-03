@@ -1156,6 +1156,70 @@ both delete a leftover copy from an older install
 present to clean up), and the SW2019 work computer - expected to work since
 the code still targets `ISwDMDocument23`, but unproven there.
 
+### End goal (session 7): a published exe anyone can use, for files up to SW2020
+Goren's goal: eventually publish a prebuilt `SwColumnManager` that works on
+any machine, SolidWorks installed or not, for files saved in SolidWorks
+2020 or earlier. Steps:
+1. **Licensing decision (Goren, on hold).** Shipping the key compiled in.
+   Official DM help: "Do not share this license key with anyone outside your
+   company or distribute it with any software that you ship" and "Each user
+   ... must have a license key"; CodeStack reads it as binary-only
+   redistribution being fine. Ambiguous - Goren is holding off publishing
+   for now. Note: the key reads 2020-saved files, so its version is >= 2020
+   (key version caps readable files: the key's version or earlier).
+2. **Bundle + register the Document Manager - built (session 7), partly
+   tested.** Official DM help (local `api\swdocmgrapi.chm`, Getting Started
+   -> Installation): "You can redistribute swDocumentMgr.dll". Bundling the
+   **2020** DLL (28.5, this machine's `SOLIDWORKS Shared` copy), switched
+   from 2019 since the goal is files up to 2020 - sidesteps the
+   older-DLL-on-newer-files question below. Never committed to the repo:
+   `SwColumnManager.csproj` copies it from `$(SwDocumentMgrPath)` (default
+   the builder's `SOLIDWORKS Shared`, same as the interop `HintPath`) next to
+   the exe, with a build warning if missing. `DocumentManagerSetup.cs`: Apply
+   registers it (copy to Program Files + `regsvr32 /s`) **only** if
+   `SwDocumentMgr.SwDMClassFactory` has no registration whose
+   `InprocServer32` file exists; stops with `ERROR` (before repointing
+   `PropertyHandlers`) if neither registered nor bundled, or if the VC++
+   x64 runtime is missing (`HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\
+   Runtimes\x64` `Installed=1`). Ownership = registered path equals our
+   Program Files copy - no marker file. Uninstall runs `regsvr32 /u` only
+   then, and deletes our copy either way. **Tested on this machine
+   (SolidWorks installed):** Apply logged "already registered (SolidWorks's
+   own copy) ... leaving it alone", Uninstall logged "nothing to remove",
+   no `ERROR`s; registry afterwards still pointed the DM at `SOLIDWORKS
+   Shared`, `PropertyHandlers` back to `{6A921E8A-...}`. Read via the new
+   `--pause` flag (`.\SwColumnManager.exe --pause` - forwarded by the
+   editor's buttons to the elevated console, which then waits for a key
+   even on success). `zlib.dll` deliberately ignored:
+   the DM help says to ship it, but this machine's working DM has no
+   `zlib.dll` next to it, doesn't import one, and has zlib compiled in.
+3. **VC++ runtime check** - built, part of step 2.
+4. **Test on a clean machine with no SolidWorks** (VM/spare PC) - not done;
+   this machine can't exercise the register path without breaking
+   SolidWorks's own registration.
+5. **Release packaging** - zip on GitHub Releases; unsigned exe will get
+   SmartScreen warnings.
+6. **Ongoing:** rebuild/re-release when the key or bundled DLL version moves.
+
+Interop DLL decision: keep the `HintPath` to the builder's SolidWorks
+install - not committed to the repo, not NuGet (third-party packages
+exist, e.g. `SolidWorks.Interop.swdocumentmgr` by "avidesk", none official).
+Anyone building needs a DM key, which needs a subscription, so they have
+SolidWorks anyway. Checked: no `xarial`/`codestack-net` GitHub repo hosts
+the native `swdocumentmgr.dll`, only the interop DLL.
+
+**Open question (session 7) - does an older `swdocumentmgr.dll` read newer
+files?** No longer blocking (bundling the 2020 DLL for a files-up-to-2020
+goal), but still unknown. Goren's guess: an older DLL may read newer files
+given a newer key. Suspected not, because `SwDmDocumentOpenError` has a
+`FutureVersion` code separate from `NoLicense`, but **untested**. Test plan:
+load an older DLL directly (`LoadLibrary` + `DllGetClassObject`, like
+`SwFilterDump` does for `sldpropertyhandler.dll`, without touching the
+registry) and open files saved in a newer version (e.g. a 2019 DLL against
+`E:\for testing\A-EYE 2020\`). This machine has no 2019 copy (SW2020
+overwrote `SOLIDWORKS Shared`). Whether an older DLL accepts a newer key
+needs a newer key to test.
+
 **Minor, non-blocking edge cases noted while reviewing, not acted on:**
 - `SchemaGenerator.BuildCanonicalName`'s sanitizer falls back to the literal
   string `"Field"` for a name with no alphanumeric characters at all (e.g.

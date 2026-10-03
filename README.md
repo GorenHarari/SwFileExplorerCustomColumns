@@ -13,14 +13,42 @@ working exactly as before.
 
 ## Requirements
 
-- Windows with SolidWorks installed (any recent version - the
-  `SolidWorks.Interop.swdocumentmgr.dll` the handler depends on ships with
-  every SolidWorks install).
-- .NET Framework 4.8 (already present on current Windows) and the .NET SDK
-  to build.
-- Your own SolidWorks **Document Manager API** license key - see the next
-  section. **The repo will not build without one** - this is expected, not
-  a bug.
+There are no prebuilt downloads - you build the tool yourself once, then
+use it on as many of your own machines as you like. The typical case is a
+SolidWorks user building and using it on the same PC, where a normal
+SolidWorks install already covers everything below except the license key.
+
+### To build it (once, on one machine)
+
+- Windows, plus the .NET SDK or Visual Studio with .NET Framework 4.8
+  support.
+- `SolidWorks.Interop.swdocumentmgr.dll` - needed only to compile, not at
+  runtime. A SolidWorks install puts it in
+  `C:\Program Files\Common Files\SOLIDWORKS Shared\` (see
+  [Building](#building) if yours is elsewhere).
+- Your own SolidWorks **Document Manager API** license key, which requires
+  an active SolidWorks subscription - see the next section. **The repo will
+  not build without one** - this is expected, not a bug.
+
+### To use it (on each machine where you want the columns)
+
+- Windows 64-bit with .NET Framework 4.8 (built into current Windows 10 and
+  11).
+- The SolidWorks Document Manager (`swdocumentmgr.dll`) registered on that
+  machine - it's what actually reads the SolidWorks files. SolidWorks itself
+  doesn't need to be installed or running. A SolidWorks install includes
+  and registers the Document Manager, and then this tool leaves it alone.
+  On a machine without one, Apply registers the copy bundled with the tool
+  (the build copies the builder's own `swdocumentmgr.dll` next to
+  `SwColumnManager.exe`; SolidWorks allows redistributing it). That needs
+  the Microsoft Visual C++ Redistributable (x64) installed - Apply stops
+  with a download link if it isn't. Uninstall unregisters the bundled copy
+  only if Apply registered it. A bundled Document Manager can't read files
+  saved with a newer SolidWorks than itself. Tested only on machines with
+  SolidWorks 2019 and 2020 installed - the no-SolidWorks path isn't tested
+  yet.
+- Admin rights, for the UAC prompt when you click Apply.
+- No separate key setup - the key is compiled into the build you copy over.
 
 ## Getting your own Document Manager API license key (required, first)
 
@@ -54,17 +82,22 @@ be shared, and nothing here will build without your own copy of it.
    `LicenseKey.cs.example` (the placeholder template, no real key) is
    actually committed to this repo.
 
-**Never commit your real key, and never distribute a compiled binary that
-has it baked in.** This key is licensed to you for your own use, tied to
-your SolidWorks serial number - not for letting other people use the paid
-Document Manager API for free through your credentials. If you want other
-people to be able to run this tool without building it themselves, don't
-bake your key into a shared `SwPropertyHandler.dll` - each person needs to
-go through the same two steps above with their own key (or ask, and this
-project's Apply flow could be changed to read the key from a per-machine
-config file set up at install time instead of a compiled constant, so
-prebuilt binaries never contain anyone's specific key - not built yet, but
-straightforward if wanted).
+**Never commit your real key.** SolidWorks's Document Manager help says:
+"Do not share this license key with anyone outside your company or
+distribute it with any software that you ship." Some community sources
+(e.g. [CodeStack](https://www.codestack.net/solidworks-document-manager-api/getting-started/create-connection/))
+read this as allowing software built with the key to be shipped in
+compiled form, but the official wording doesn't clearly say so. This
+project doesn't publish prebuilt binaries for now. If you want to hand
+out a build with your key compiled in, confirm with SolidWorks API
+support first.
+
+**The key is tied to a SolidWorks version.** The Document Manager can't
+open files saved with a newer SolidWorks than your key's version, and it
+reports the key as expired. Because the handler swallows errors, those
+files just show blank columns. After upgrading to a new major SolidWorks
+release, request a new key, put it in `LicenseKey.cs`, rebuild, and run
+Apply again.
 
 `ReadSwProperties`/`SwFilterDump` (the dev/research tools - see below) use
 a *different* mechanism for the same key - an environment variable
@@ -95,14 +128,21 @@ build or use it. The output lands in `SwColumnManager\bin\Release\net48\`.
 This also builds `SwPropertyHandler` (a project reference) and copies its
 DLL next to `SwColumnManager.exe` automatically. The build compiles against
 **your own** SolidWorks install's `SolidWorks.Interop.swdocumentmgr.dll`,
-but that DLL is never copied into the output or installed anywhere -
-SolidWorks DLLs can't be redistributed, so the handler embeds the few
-Document Manager interop types it uses (`EmbedInteropTypes`) and at runtime
-talks directly to the Document Manager that's already installed with
-SolidWorks on that machine. If `SolidWorks.Interop.swdocumentmgr.dll` isn't
+but that DLL is never copied into the output or installed anywhere. It
+isn't on SolidWorks's list of redistributable files, so the handler embeds
+the few Document Manager interop types it uses (`EmbedInteropTypes`). At
+runtime it talks directly to the Document Manager (`swDocumentMgr.dll`)
+already registered on that machine. If `SolidWorks.Interop.swdocumentmgr.dll` isn't
 where `SwPropertyHandler.csproj`'s `HintPath` expects
 (`C:\Program Files\Common Files\SOLIDWORKS Shared\...`), fix that path to
 wherever your install actually put it.
+
+The build also copies your SolidWorks install's Document Manager
+(`C:\Program Files\Common Files\SOLIDWORKS Shared\swdocumentmgr.dll`) next
+to `SwColumnManager.exe`, so Apply can register it on machines without
+SolidWorks. Its version caps which files those machines can read. To
+bundle a different copy, build with `-p:SwDocumentMgrPath=<path>`. If it
+isn't found, the build warns and continues without it.
 
 If you see a compiler error like `The name 'LicenseKey' does not exist in
 the current context`, that means `SwPropertyHandler\LicenseKey.cs` doesn't
@@ -126,6 +166,11 @@ exist yet - go back to the previous section.
    **Apply Changes** again to push the change live.
 6. **Uninstall** reverts everything - Explorer's columns go back to exactly
    what SolidWorks's own installer set up, as if this tool had never run.
+
+To read the Apply/Uninstall log even when nothing failed, start the tool
+with `--pause` (in PowerShell, from the exe's folder:
+`.\SwColumnManager.exe --pause`) - the console then waits for a key before
+closing.
 
 ## How this tool works
 
