@@ -44,7 +44,12 @@ sortable/filterable columns in Windows Explorer.
     `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PropertySystem\
     PropertySchema\0001`, pointing at
     `C:\ProgramData\SolidWorks\SOLIDWORKS 2019\lang\english\xmlschema\
-    solidworksproperties.propdesc`). That XML file defines **24** properties
+    solidworksproperties.propdesc`). That XML file defines **21** properties
+    (corrected session 7 - originally written as 24; a recount of every
+    2019/2020 copy on this machine gives 21 `<propertyDescription>`
+    entries, 3 with `<labelInfo>`. The "24" below in the first-pass test is
+    likely the number of names that test queried, not the schema count -
+    not re-verified)
     in the `Solidworks.Document.*` namespace (Description, Configurations,
     References, Features, CustomProperties, Notes, Tables, Material, Number,
     UserDescription, Project, Author, LastSavedWith, OpenTime, Sketches,
@@ -188,9 +193,9 @@ sortable/filterable columns in Windows Explorer.
   - **Where the Explorer column label comes from:** the `<labelInfo
     label="...">` element inside each `<propertyDescription>` in the
     `.propdesc` XML is the single source of truth for the display label -
-    nothing else maps name to label. Only 3 of the 24 properties have a
+    nothing else maps name to label. Only 3 of the 21 properties have a
     `<labelInfo>` at all (Description, LastSavedWith, OpenTime). Confirmed
-    empirically: the other 21 (Material, Number, Author, Project,
+    empirically: the other 18 (Material, Number, Author, Project,
     Configurations, etc., all lacking `<labelInfo>`) do **not** appear
     anywhere in Explorer's 325-entry column list (`ExplorerColumns.csv`) -
     no label means the property isn't offered as a selectable UI column at
@@ -324,8 +329,8 @@ sortable/filterable columns in Windows Explorer.
   **secret, git-ignored** (added in the same commit as this project) - the
   SWDM license key baked in as a compiled constant. **Built, core logic
   verified** against the real test part; the broader risk-test matrix
-  (fixtures, locked files, concurrency, performance) is deferred - see
-  Phase 3 below.
+  (fixtures, locked files, concurrency, performance) was run later and
+  passed - see Phase 3 below.
 - `SwPropertyHandlerTest/` - throwaway-style console harness for
   `SwPropertyHandler`, same pattern as `SwFilterDump`'s
   `TestPropertyHandler`: forces genuine COM activation via
@@ -359,8 +364,10 @@ sortable/filterable columns in Windows Explorer.
   into one idempotent `Apply()`. Carries `ColumnLookup.cs` (Issue 2's
   `IShellFolder2` interop) and a `ProjectReference` to `SwPropertyHandler`
   purely so MSBuild copies the handler DLL into this project's own output
-  folder (no SolidWorks DLL comes along any more - see "SolidWorks interop
-  DLL no longer redistributed" below) -
+  folder (the interop DLL no longer comes along - see "SolidWorks interop
+  DLL no longer redistributed" below; since session 7 the native
+  `swdocumentmgr.dll` *is* bundled, copied by a separate csproj item -
+  see "End goal" below) -
   "Apply" then copies that bundled DLL to
   `%ProgramFiles%\SwFileExplorerCustomColumns\SwPropertyHandler.dll` and
   registers *that* path via `regasm /codebase`, not a dev-repo path.
@@ -385,7 +392,9 @@ sortable/filterable columns in Windows Explorer.
   something that belongs committed to what's now a shippable tool's repo.
   Testing going forward uses Goren's local fixture folder instead
   (`E:\for testing\A-EYE 2020\`, not part of this repo).
-- `README.md` - fuller run instructions for both scripts.
+- `README.md` - the public project README: build vs. use requirements,
+  license key setup, building, using `SwColumnManager`, how it works, and
+  the research/dev tools.
 
 ## Not yet done / open questions
 - **Fully resolved:** which properties show as live Explorer *columns*
@@ -876,7 +885,8 @@ run and passed, none remain deferred.
 ### Phase 4 - full integration (registration + real repoint) - done, fully tested
 **Correction carried over from this session: this machine is Goren's actual
 non-production test machine** (see the correction note at the end of Phase
-2) - "work computer" is the separate, untouched production machine. Phase 4
+2) - "work computer" is the separate production machine (untouched at the
+time; first deployed to later - see "Known gaps" below). Phase 4
 was built and fully tested here for real, not deferred.
 
 **Two design issues raised and resolved before testing the live repoint:**
@@ -982,9 +992,10 @@ three extensions, deliberately separate from the existing placeholder-based
 ### Ongoing - testing discipline and maintenance
 Phases 0-4 are now fully built and tested on this machine (Goren's
 non-production test machine), including every risk test from Phase 3's
-original plan (none remain deferred - see Phase 3 above). Nothing has
-touched the work computer (the actual production target) yet - that's the
-next step, moving the now fully-verified setup there. Separately, ongoing
+original plan (none remain deferred - see Phase 3 above). The work
+computer (the actual production target, SW2019 only) has since had its
+first deployment, which works after the `ISwDMDocument23` fix - see
+"Known gaps" below. Separately, ongoing
 once deployed for real anywhere: re-run Apply after any SolidWorks
 update/repair to confirm `PropertyHandlers` still points at our handler
 rather than having silently reverted to SolidWorks's own (item 8 above).
@@ -999,6 +1010,9 @@ name SolidWorks happened to also register a label for) to *any* custom
 property name, for any file type.
 
 **How it works:**
+(`FieldListEditor` was later merged into `SwColumnManager` - session 5 -
+so read "`FieldListEditor`" below as `SwColumnManager`, where
+`ColumnLookup.cs` and the `knownColumns.json` refresh live now.)
 1. **`ColumnLookup.cs`** (in `FieldListEditor` only - deliberately kept out
    of `SwPropertyHandler`, see below) drives `IShellFolder2::MapColumnToSCID`
    directly to get the real PROPERTYKEY for every one of Explorer's ~325
@@ -1080,8 +1094,8 @@ removed as redundant - only `Number`, `Material`, `Thickness`, `Category`,
   the local interop DLL exposes, and test on the oldest SolidWorks version
   you need to support.
 - **Config-file-based license key for wider binary distribution** - raised
-  while prepping the repo to go public (see README's license-key section).
-  Not built: `SwPropertyHandler` still needs the key compiled in, so a
+  while prepping the repo to go public (the README no longer mentions it;
+  distribution is now tracked under "End goal" below). Not built: `SwPropertyHandler` still needs the key compiled in, so a
   prebuilt binary would carry whoever built it's specific key. Only matters
   if this is ever handed to people who won't build it themselves.
 
@@ -1124,7 +1138,10 @@ legacy properties both resolving correctly), clean uninstall again.
 all; the handler no longer needs it at runtime.
 
 ### SolidWorks interop DLL no longer redistributed (session 6) - done, tested
-We're not allowed to publish/deploy SolidWorks DLLs, but the fix above
+We're not allowed to publish/deploy SolidWorks DLLs (correction, session 7:
+true for the interop DLL, which isn't on SolidWorks's redistributable list,
+but SolidWorks's Document Manager help does allow redistributing the native
+`swDocumentMgr.dll` - see "End goal" below), but the fix above
 made Apply install `SolidWorks.Interop.swdocumentmgr.dll` into Program
 Files, and the build bundled it next to `SwColumnManager.exe`.
 
