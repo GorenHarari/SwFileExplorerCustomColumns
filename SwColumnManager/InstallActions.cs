@@ -50,14 +50,13 @@ namespace SwColumnManager
             log("--- Step 2: install the property handler DLL ---");
             try
             {
-                File.Copy(SourceHandlerDllPath, InstalledHandlerDllPath, overwrite: true);
+                ExplorerUtil.RetryOnLock(
+                    () => File.Copy(SourceHandlerDllPath, InstalledHandlerDllPath, overwrite: true), log);
                 log($"Copied handler to {InstalledHandlerDllPath}");
             }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
                 log($"ERROR copying handler files: {ex.Message}");
-                log("If the handler is already loaded by a running explorer.exe (from a previous");
-                log("install), close Explorer windows or restart explorer.exe and try again.");
                 return;
             }
 
@@ -132,12 +131,16 @@ namespace SwColumnManager
 
                 try
                 {
-                    File.Delete(InstalledHandlerDllPath);
+                    // A loaded/mapped executable image denies delete with
+                    // UnauthorizedAccessException (ERROR_ACCESS_DENIED), not
+                    // the IOException (ERROR_SHARING_VIOLATION) a locked data
+                    // file would give - confirmed directly against this DLL.
+                    ExplorerUtil.RetryOnLock(() => File.Delete(InstalledHandlerDllPath), log);
                     log($"Deleted {InstalledHandlerDllPath}");
                 }
-                catch (IOException ex)
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    log($"Could not delete the handler DLL (likely still loaded by explorer.exe): {ex.Message}");
+                    log($"Could not delete the handler DLL: {ex.Message}");
                 }
 
                 DeleteLegacyInteropDll(log);

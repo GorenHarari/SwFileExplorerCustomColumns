@@ -85,11 +85,11 @@ namespace SwColumnManager
 
         private void RemoveButton_Click(object sender, EventArgs e) => RemoveSelectedField();
 
-        private void ApplyButton_Click(object sender, EventArgs e) => RunElevated("--apply",
+        private void ApplyButton_Click(object sender, EventArgs e) => RunElevated("--apply", "Apply",
             "This will register the property handler and apply your tracked fields to " +
             "Windows Explorer. You'll be prompted for administrator approval.");
 
-        private void UninstallButton_Click(object sender, EventArgs e) => RunElevated("--uninstall",
+        private void UninstallButton_Click(object sender, EventArgs e) => RunElevated("--uninstall", "Uninstall",
             "This will remove the property handler and restore SolidWorks's original " +
             "Explorer columns. You'll be prompted for administrator approval.");
 
@@ -160,7 +160,7 @@ namespace SwColumnManager
             RefreshListBox();
         }
 
-        private void RunElevated(string arg, string confirmMessage)
+        private void RunElevated(string arg, string actionLabel, string confirmMessage)
         {
             var confirm = MessageBox.Show(this, confirmMessage, "Confirm",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -178,9 +178,24 @@ namespace SwColumnManager
                 };
 
                 Cursor = Cursors.WaitCursor;
+                int exitCode;
                 using (var process = Process.Start(psi))
                 {
                     process.WaitForExit();
+                    exitCode = process.ExitCode;
+                }
+
+                if (exitCode == 0)
+                {
+                    MessageBox.Show(this, $"{actionLabel} completed successfully.", actionLabel,
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    MessageBox.Show(this,
+                        $"{actionLabel} did not complete successfully.\n\n" +
+                        "Run the tool again with --pause (or just try again) to see the detailed log.",
+                        actionLabel, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             catch (Win32Exception)

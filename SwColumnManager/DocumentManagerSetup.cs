@@ -107,12 +107,12 @@ namespace SwColumnManager
 
             try
             {
-                File.Delete(installedPath);
+                ExplorerUtil.RetryOnLock(() => File.Delete(installedPath), log);
                 log($"Deleted {installedPath}");
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
-                log($"Could not delete {installedPath} (likely still loaded by explorer.exe): {ex.Message}");
+                log($"Could not delete {installedPath}: {ex.Message}");
             }
         }
 

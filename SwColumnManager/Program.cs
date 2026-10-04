@@ -24,7 +24,11 @@ namespace SwColumnManager
             if (args.Length > 0 && (args[0].Equals("--apply", StringComparison.OrdinalIgnoreCase) ||
                                      args[0].Equals("--uninstall", StringComparison.OrdinalIgnoreCase)))
             {
-                RunElevatedAction(args[0]);
+                // Exit code lets the unprivileged editor (MainForm.RunElevated)
+                // show the non-technical user a simple success/failure message,
+                // rather than relying on them to read the console log.
+                bool success = RunElevatedAction(args[0]);
+                Environment.Exit(success ? 0 : 1);
                 return;
             }
 
@@ -42,7 +46,7 @@ namespace SwColumnManager
         // when Main returns, with no "did it succeed, should I auto-close"
         // logic to maintain - only pausing on an actual failure so there's
         // something to read (or always, with --pause).
-        private static void RunElevatedAction(string arg)
+        private static bool RunElevatedAction(string arg)
         {
             AllocConsole();
 
@@ -78,6 +82,8 @@ namespace SwColumnManager
                 Console.WriteLine("Press any key to close...");
                 Console.ReadKey();
             }
+
+            return !hadError;
         }
     }
 }

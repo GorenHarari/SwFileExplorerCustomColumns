@@ -161,6 +161,85 @@ refactored handler is genuinely serving values: `SwSync.Material = '10B21'`,
 `...OpenTime = '0 mins 01 secs'` (our format, not SolidWorks's own
 `'0:01'` - proof this handler, not the old one, answered the query).
 
+## Automatic recovery from a locked handler DLL (session 8) - done, tested
+Apply/Uninstall had always required a manual workaround documented
+elsewhere in this file - restart `explorer.exe`, sometimes stop the Windows
+Search service - when the handler DLL (or a bundled `swdocumentmgr.dll`)
+was already loaded by something. Goren asked for this to be automatic
+instead, since he kept hitting it (every re-Apply or re-Uninstall after the
+tool was already installed once). Found the real cause by actually
+diagnosing it this time rather than guessing, since two earlier guesses
+both turned out wrong once tested:
+
+- **First guess, wrong: just restart `explorer.exe`.** Added
+  `ExplorerUtil.Restart` (kill every `explorer.exe` process, let Windows
+  relaunch it automatically as the interactive user - never explicitly
+  `Process.Start("explorer.exe")` from this already-elevated process, which
+  would launch an elevated Explorer instead) and wrapped it around the
+  handler-DLL copy (Apply) and delete (Uninstall), plus the bundled
+  `swdocumentmgr.dll` delete in `DocumentManagerSetup.RemoveIfOurs`.
+  **Caught a real bug while wiring this in**: the delete call sites only
+  caught `IOException`, but a live reproduction of the uninstall lock threw
+  `UnauthorizedAccessException` instead - confirmed this is the actual,
+  consistent behavior for deleting a currently loaded/mapped executable
+  image (`ERROR_ACCESS_DENIED`), different from the `IOException`
+  (`ERROR_SHARING_VIOLATION`) that overwriting one throws. Fixed to catch
+  both everywhere. **This alone fixed the Uninstall case** - tested live,
+  confirmed via the log (`explorer.exe has this file locked - restarting
+  it...` then `Deleted ...`), with no manual intervention needed.
+- **Second guess, also wrong: it's the Windows Search Indexer
+  (`SearchIndexer.exe`).** Goren then hit the same lock on a **re-Apply**
+  (add a field, click Apply again without Uninstalling first) and the
+  explorer-restart fix didn't help - confirmed directly that the
+  freshly-restarted `explorer.exe` did NOT have the DLL loaded at all
+  (`Get-Process -Id <pid> | Select Modules`), yet the file stayed locked
+  with the same `ERROR_ACCESS_DENIED` pattern. Guessed the Search Indexer
+  service next (a suspect already raised earlier in this project, for the
+  same symptom class), added a `ServiceController`-based stop/retry/restart
+  fallback (`System.ServiceProcess` reference added to
+  `SwColumnManager.csproj`) - **tested live, still failed**, ruling this
+  guess out too.
+- **Found it for real via Windows' own Resource Monitor** (`resmon.exe`,
+  CPU tab, "Search Handles", searched `SwPropertyHandler.dll`) rather than
+  guessing a third time: **`SearchFilterHost.exe`** - a sandboxed surrogate
+  process Windows Search spawns on demand to host third-party
+  `IFilter`/property-handler COM components (like ours) in isolation, so a
+  buggy one can't crash the indexer or `explorer.exe` itself. It holds the
+  DLL loaded until its own idle timeout, independent of both
+  `explorer.exe` and the `SearchIndexer` service - explaining why neither
+  earlier fix worked. Replaced both previous attempts with a single fix:
+  kill `SearchFilterHost.exe` directly (same `Process.GetProcessesByName`
+  pattern as `explorer.exe`, no restart needed - Windows spawns a fresh one
+  automatically whenever one's next needed) alongside the `explorer.exe`
+  restart. Removed the now-unnecessary `ServiceController`/`WSearch` code
+  and the `System.ServiceProcess` reference.
+- **`ExplorerUtil.RetryOnLock(Action operation, Action<string> log)`** is
+  the final shape: try the operation; on `IOException`/
+  `UnauthorizedAccessException`, kill `SearchFilterHost.exe` + restart
+  `explorer.exe` once, then retry up to 4 total attempts with a 1-second
+  delay between them (covers a slower-clearing lock without repeatedly
+  killing anything). All three call sites (`InstallActions.Apply`'s copy,
+  `InstallActions.Uninstall`'s delete, `DocumentManagerSetup.RemoveIfOurs`'s
+  delete) now share this one helper instead of three separately
+  hand-written nested try/catch blocks.
+- **Tested live, confirmed firing for real**: with `SearchFilterHost.exe`
+  confirmed running, clicked Apply again - log showed `File is locked -
+  killing SearchFilterHost.exe ... and restarting explorer.exe...`
+  immediately followed by a successful copy on the very first retry, no
+  manual intervention. Also reproduced Goren's exact original repro
+  (add a field, Apply again without Uninstalling) successfully end-to-end
+  multiple times in a row.
+
+Also added, same session, a non-technical-user-facing result message:
+`Program.RunElevatedAction` now returns whether it succeeded (`!hadError`)
+and `Main` propagates that as the elevated process's real exit code
+(previously always exited 0 regardless of `hadError` - the console log was
+the only signal). `MainForm.RunElevated` checks `process.ExitCode` after
+`WaitForExit()` and shows a plain "Apply/Uninstall completed successfully"
+or "...did not complete successfully" `MessageBox`, instead of requiring
+the user to read the console log (which flashes and closes on success
+unless `--pause` is given).
+
 ## Background / what we've learned so far (mechanism now fully confirmed)
 - **Correction: SolidWorks files are NOT OLE structured-storage (compound
   binary) files**, at least not for SW2019+ parts - this was the original
