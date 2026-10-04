@@ -54,6 +54,113 @@ public-release bundling (untouched this session).
 - Public release bundling (2020 license key + DLL, see "End goal" below)
   lives on Goren's personal computer - not touched this session.
 
+## Code quality pass on the shippable tool (session 8) - done, tested
+Separate from the deployment work above, same session: a cleanup/
+readability/performance pass over `SwColumnManager` + `SwPropertyHandler`
+only (the actual shipped product - `SwFilterDump`/`ReadSwProperties`/
+`SwPropertyHandlerTest` are dev/test harnesses, explicitly out of scope).
+Done in that fixed order - cleanup first, then readability/separation of
+concerns, then performance - with a build (and, for anything touching
+`SwPropertyHandler`, a `SwPropertyHandlerTest` run against a real file)
+after every single sub-step, not just at the end.
+
+**1. Cleanup (dead code & duplication):**
+- Removed `PropertyHandlerRegistry.GetCurrentClsid`/`GetCurrentClsids`
+  (confirmed via grep - never called from anywhere, a leftover from the old
+  `SchemaApplyTool` era) and `FieldItem.Pid` (set, never read - `FieldItem`
+  is a UI-only display wrapper for the list box, unrelated to the real
+  name->pid data in `fields.json`).
+- Eliminated a byte-for-byte duplicate of the reserved-names list that
+  existed in both `SwPropertyHandler/LegacyProperties.cs` and
+  `SwColumnManager/MainForm.cs`. Made `LegacyProperties` (and its
+  `ReservedNames` field) `public` instead of `internal`; `MainForm` now
+  reads `SwPropertyHandler.LegacyProperties.ReservedNames` directly via the
+  `ProjectReference` that already existed for DLL-bundling purposes. The
+  `AddField` rejection message's hand-typed prose list (which had already
+  drifted - missing "Authors"/"Tags") is now generated from the same array
+  via `string.Join` instead of a second hand-maintained copy.
+- Added `SwColumnManager/FieldsStore.cs` as the single `fields.json`
+  load/save implementation, replacing separate reimplementations in
+  `MainForm` and `InstallActions`. This fixed a real latent inconsistency:
+  `MainForm`'s dictionary used `StringComparer.OrdinalIgnoreCase`,
+  `InstallActions`'s didn't - a property name differing only by case could
+  dedupe differently depending which code path read the file. Both now go
+  through one case-insensitive implementation.
+
+**2. Readability / maintainability / separation of concerns:**
+- Extracted `SwColumnManager/KnownColumnsCache.cs` (the `ColumnLookup` ->
+  `knownColumns.json` write, previously inline in `MainForm`'s `Shown`
+  handler) - pairs naturally with `ColumnLookup.cs`, keeps `MainForm`
+  focused on UI/business logic.
+- Split `MainForm.cs` into `MainForm.cs` (logic) + `MainForm.Designer.cs`
+  (control declarations/layout/event wiring), matching the standard VS
+  WinForms partial-class template (including the inert `components`
+  `IContainer`/`Dispose` boilerplate every new WinForms project gets, for
+  parity even though nothing here currently needs it). Inline lambda event
+  handlers became named methods (`AddButton_Click`, `TextBox_KeyDown`,
+  `MainForm_Shown`, etc.) wired from `InitializeComponent()`, the idiomatic
+  designer-generated pattern.
+- Decomposed `SwPropertyHandler/SwPropertyStore.cs` (previously 341 lines
+  mixing COM lifecycle, config I/O, SWDM document-opening, and auto-match
+  logic) via pure moves into three new files: `HandlerConfig.cs`
+  (`LoadFields`/`LoadKnownColumns`), `AutoMatcher.cs`
+  (`ComputeAutoMatches`), and a new `SwDmDocument.cs` (see next point).
+  `SwPropertyStore` is now a thin shell over the `IInitializeWithFile`/
+  `IPropertyStore` contract, delegating to the above.
+- **Consolidated all `SolidWorks.Interop.swdocumentmgr` access into one
+  class** (Goren's explicit ask, after noticing the interop type was
+  referenced from three places): `SwDmDocument` (replacing the
+  shorter-lived `SwDmDocumentOpener`) now owns the `ISwDMDocument23`
+  handle entirely and exposes a plain C#-typed surface (`string`/`string[]`/
+  `int` - `Title`, `Subject`, `Author`, `Keywords`, `Comments`,
+  `GetCustomProperty(name)`, `GetCustomPropertyNames()`,
+  `GetFileAvgTime()`, `GetVersionCode()`, plus the `TryOpen`/`IDisposable`
+  lifecycle). `SwPropertyStore` and `AutoMatcher` now depend only on this
+  surface - neither has a `using SolidWorks.Interop.swdocumentmgr;` any
+  more. Confirmed via grep: that `using` now appears in exactly one file.
+- Replaced `GetValue`'s 8-way `if/else if` chain of
+  `LegacyProperties.KeyEquals` checks with a
+  `Dictionary<PROPERTYKEY, Func<SwDmDocument, object>>` built once as a
+  static field (keyed via a small `IEqualityComparer<PROPERTYKEY>` wrapping
+  `LegacyProperties.KeyEquals`, since the struct has no built-in one) -
+  same resolution, one lookup instead of up to 8 sequential comparisons.
+
+**3. Performance:** concluded there was nothing to do beyond the dispatch
+dictionary above. `SwPropertyStore`'s real cost is the SWDM COM calls,
+already measured (Phase 3) at ~11-14ms/file with zero failures under
+concurrent load - well within budget, not worth optimizing further without
+a concrete reason.
+
+**Verification approach:** every `SwPropertyHandler`-touching sub-step was
+built, then run through `SwPropertyHandlerTest` (both the direct,
+non-COM-activated path and the real `Type.GetTypeFromCLSID` COM-activation
+path) against a real file on this machine
+(`C:\Users\GorenHarari\Desktop\TEST\220-320612 WalkAir_WheelAxle.SLDPRT`),
+confirming byte-identical output (`GetCount() = 12`, same 12 resolved
+values) before moving to the next sub-step - zero regressions at any
+point. After the full pass, also ran `--batch` across all 24 real files in
+that folder (parts, assemblies, and off-the-shelf fasteners/bearings): 272
+ms total, 11 ms/file average, zero failures - matching Phase 3's original
+numbers, confirming no performance regression either.
+`SwColumnManager`-only sub-steps were smoke-tested live through the real
+editor GUI (add/remove fields, persistence across restart, reserved-name
+rejection text, window resize/anchoring) rather than via a harness, since
+that project has no COM/Explorer risk.
+
+**Committed** (`60a3c50`) and pushed. **Then re-Applied for real** on this
+machine (needed restarting `explorer.exe` first - the previous,
+pre-refactor handler DLL was still loaded and blocked the overwrite with
+"being used by another process", the same class of lock issue already
+documented elsewhere in this file for uninstall). After the restart, Apply
+succeeded cleanly (same `PSRegisterPropertySchema -> 0x000401A0` as every
+other run - still unexplained, still not blocking). **Final live check**
+via the real `Shell.Application.ExtendedProperty` path confirmed the
+refactored handler is genuinely serving values: `SwSync.Material = '10B21'`,
+`SwSync.Weight = '22.77'`, `Solidworks.Document.Description =
+'WalkAir_WheelAxle'`, `...LastSavedWith = 'SOLIDWORKS 2019'`,
+`...OpenTime = '0 mins 01 secs'` (our format, not SolidWorks's own
+`'0:01'` - proof this handler, not the old one, answered the query).
+
 ## Background / what we've learned so far (mechanism now fully confirmed)
 - **Correction: SolidWorks files are NOT OLE structured-storage (compound
   binary) files**, at least not for SW2019+ parts - this was the original
