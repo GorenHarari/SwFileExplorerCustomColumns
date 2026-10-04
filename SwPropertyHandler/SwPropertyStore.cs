@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Web.Script.Serialization;
-using SolidWorks.Interop.swdocumentmgr;
 
 namespace SwPropertyHandler
 {
@@ -40,12 +37,28 @@ namespace SwPropertyHandler
     {
         private static readonly Guid SchemaFormatId = new Guid("42161C84-EBEC-4753-9E00-9D700D9B4361");
 
-        private static readonly string ConfigDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "SwFileExplorerCustomColumns");
+        // How to resolve each of LegacyProperties.All to a live value, keyed
+        // by PROPERTYKEY instead of a chain of LegacyProperties.KeyEquals
+        // checks - same resolution, just a lookup instead of up to 8
+        // sequential comparisons.
+        private sealed class PropertyKeyComparer : IEqualityComparer<PROPERTYKEY>
+        {
+            public bool Equals(PROPERTYKEY a, PROPERTYKEY b) => LegacyProperties.KeyEquals(a, b);
+            public int GetHashCode(PROPERTYKEY k) => k.fmtid.GetHashCode() ^ (int)k.pid;
+        }
 
-        private static readonly string FieldsPath = Path.Combine(ConfigDir, "fields.json");
-        private static readonly string KnownColumnsPath = Path.Combine(ConfigDir, "knownColumns.json");
+        private static readonly Dictionary<PROPERTYKEY, Func<SwDmDocument, object>> LegacyValueResolvers =
+            new Dictionary<PROPERTYKEY, Func<SwDmDocument, object>>(new PropertyKeyComparer())
+            {
+                [LegacyProperties.Description] = doc => doc.GetCustomProperty("Description"),
+                [LegacyProperties.OpenTime] = doc => doc.GetFileAvgTime(),
+                [LegacyProperties.LastSavedWith] = doc => LegacyProperties.FormatVersion(doc.GetVersionCode()),
+                [LegacyProperties.Title] = doc => doc.Title,
+                [LegacyProperties.Subject] = doc => doc.Subject,
+                [LegacyProperties.Author] = doc => doc.Author,
+                [LegacyProperties.Keywords] = doc => doc.Keywords,
+                [LegacyProperties.Comment] = doc => doc.Comments,
+            };
 
         // name -> pid, ordered by pid for stable GetAt enumeration.
         private List<KeyValuePair<string, int>> _fields = new List<KeyValuePair<string, int>>();
@@ -53,13 +66,13 @@ namespace SwPropertyHandler
         // Computed per-instance from this file's actual custom properties.
         private List<KeyValuePair<string, PROPERTYKEY>> _autoMatched = new List<KeyValuePair<string, PROPERTYKEY>>();
 
-        private ISwDMDocument23 _doc;
+        private SwDmDocument _doc;
 
         public void Initialize(string pszFilePath, uint grfMode)
         {
-            _fields = LoadFields();
-            _doc = TryOpenDocument(pszFilePath);
-            _autoMatched = ComputeAutoMatches(_doc, _fields);
+            _fields = HandlerConfig.LoadFields();
+            _doc = SwDmDocument.TryOpen(pszFilePath);
+            _autoMatched = AutoMatcher.ComputeAutoMatches(_doc, _fields);
         }
 
         public void GetCount(out uint cProps)
@@ -102,38 +115,9 @@ namespace SwPropertyHandler
 
             try
             {
-                if (LegacyProperties.KeyEquals(key, LegacyProperties.Description))
+                if (LegacyValueResolvers.TryGetValue(key, out var resolve))
                 {
-                    pv = _doc.GetCustomPropertyValues("Description", out SwDmCustomInfoType _, out string _unused1);
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.OpenTime))
-                {
-                    _doc.GetFileAvgTime(out string fileTime, out string _unused2);
-                    pv = fileTime;
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.LastSavedWith))
-                {
-                    pv = LegacyProperties.FormatVersion(_doc.GetVersion());
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Title))
-                {
-                    pv = _doc.Title;
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Subject))
-                {
-                    pv = _doc.Subject;
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Author))
-                {
-                    pv = _doc.Author;
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Keywords))
-                {
-                    pv = _doc.Keywords;
-                }
-                else if (LegacyProperties.KeyEquals(key, LegacyProperties.Comment))
-                {
-                    pv = _doc.Comments;
+                    pv = resolve(_doc);
                 }
                 else if (key.fmtid == SchemaFormatId)
                 {
@@ -141,7 +125,7 @@ namespace SwPropertyHandler
                     string name = _fields.FirstOrDefault(f => f.Value == pid).Key;
                     if (name != null)
                     {
-                        pv = _doc.GetCustomPropertyValues(name, out SwDmCustomInfoType _, out string _unused3);
+                        pv = _doc.GetCustomProperty(name);
                     }
                 }
                 else
@@ -150,7 +134,7 @@ namespace SwPropertyHandler
                     string autoName = _autoMatched.FirstOrDefault(a => LegacyProperties.KeyEquals(a.Value, keyCopy)).Key;
                     if (autoName != null)
                     {
-                        pv = _doc.GetCustomPropertyValues(autoName, out SwDmCustomInfoType _, out string _unused4);
+                        pv = _doc.GetCustomProperty(autoName);
                     }
                 }
             }
@@ -170,167 +154,11 @@ namespace SwPropertyHandler
         {
         }
 
-        private static List<KeyValuePair<string, int>> LoadFields()
-        {
-            try
-            {
-                if (!File.Exists(FieldsPath))
-                {
-                    return new List<KeyValuePair<string, int>>();
-                }
-
-                string json = File.ReadAllText(FieldsPath);
-                var serializer = new JavaScriptSerializer();
-                var dict = serializer.Deserialize<Dictionary<string, int>>(json);
-
-                // Defensive: reserved names are always served via
-                // LegacyProperties instead - skip them here even if
-                // fields.json was hand-edited to include one, so a value is
-                // never reported twice under two different PROPERTYKEYs.
-                return dict
-                    .Where(kvp => !LegacyProperties.ReservedNames.Any(r =>
-                        string.Equals(r, kvp.Key, StringComparison.OrdinalIgnoreCase)))
-                    .OrderBy(kvp => kvp.Value)
-                    .ToList();
-            }
-            catch
-            {
-                return new List<KeyValuePair<string, int>>();
-            }
-        }
-
-        private static Dictionary<string, PROPERTYKEY> LoadKnownColumns()
-        {
-            var result = new Dictionary<string, PROPERTYKEY>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
-                if (!File.Exists(KnownColumnsPath))
-                {
-                    return result;
-                }
-
-                string json = File.ReadAllText(KnownColumnsPath);
-                var serializer = new JavaScriptSerializer();
-                var raw = serializer.Deserialize<Dictionary<string, Dictionary<string, object>>>(json);
-                foreach (var kvp in raw)
-                {
-                    var fmtid = new Guid((string)kvp.Value["fmtid"]);
-                    uint pid = Convert.ToUInt32(kvp.Value["pid"]);
-                    result[kvp.Key] = new PROPERTYKEY(fmtid, pid);
-                }
-            }
-            catch
-            {
-                // Missing/corrupt cache - just means no auto-matching this time, not a crash.
-            }
-            return result;
-        }
-
-        // For every real custom property on THIS file, check whether its
-        // name matches an already-existing Explorer column - if so, serve
-        // it under that column's real identity instead of needing a
-        // fields.json entry at all. Skips anything LegacyProperties already
-        // owns, and anything fields.json already claims under our own
-        // schema, so nothing is ever reported under two PROPERTYKEYs.
-        private static List<KeyValuePair<string, PROPERTYKEY>> ComputeAutoMatches(
-            ISwDMDocument23 doc, List<KeyValuePair<string, int>> fields)
-        {
-            var result = new List<KeyValuePair<string, PROPERTYKEY>>();
-            if (doc == null)
-            {
-                return result;
-            }
-
-            try
-            {
-                var knownColumns = LoadKnownColumns();
-                if (knownColumns.Count == 0)
-                {
-                    return result;
-                }
-
-                var names = doc.GetCustomPropertyNames() as object[];
-                if (names == null)
-                {
-                    return result;
-                }
-
-                foreach (var n in names)
-                {
-                    string name = n as string;
-                    if (string.IsNullOrEmpty(name))
-                    {
-                        continue;
-                    }
-
-                    if (LegacyProperties.ReservedNames.Any(r => string.Equals(r, name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        continue;
-                    }
-
-                    if (fields.Any(f => string.Equals(f.Key, name, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        continue;
-                    }
-
-                    if (knownColumns.TryGetValue(name, out PROPERTYKEY key))
-                    {
-                        result.Add(new KeyValuePair<string, PROPERTYKEY>(name, key));
-                    }
-                }
-            }
-            catch
-            {
-                // Any SWDM failure here just means no auto-matching this time, not a crash.
-            }
-
-            return result;
-        }
-
-        private static ISwDMDocument23 TryOpenDocument(string filePath)
-        {
-            try
-            {
-                SwDmDocumentType docType;
-                string ext = Path.GetExtension(filePath).ToLowerInvariant();
-                switch (ext)
-                {
-                    case ".sldprt":
-                        docType = SwDmDocumentType.swDmDocumentPart;
-                        break;
-                    case ".sldasm":
-                        docType = SwDmDocumentType.swDmDocumentAssembly;
-                        break;
-                    case ".slddrw":
-                        docType = SwDmDocumentType.swDmDocumentDrawing;
-                        break;
-                    default:
-                        return null;
-                }
-
-                var classFactory = (SwDMClassFactory)Activator.CreateInstance(
-                    Type.GetTypeFromProgID("SwDocumentMgr.SwDMClassFactory"));
-
-                ISwDMApplication app = classFactory.GetApplication(LicenseKey.Value);
-                if (app == null)
-                {
-                    return null;
-                }
-
-                ISwDMDocument doc = app.GetDocument(filePath, docType, true, out SwDmDocumentOpenError _);
-                return doc as ISwDMDocument23;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
         ~SwPropertyStore()
         {
             try
             {
-                _doc?.CloseDoc();
+                _doc?.Dispose();
             }
             catch
             {

@@ -11,7 +11,7 @@ namespace SwPropertyHandler
     // so after repointing PropertyHandlers to our handler, these three
     // existing columns keep working under their existing identity instead
     // of going blank or being duplicated under our schema.
-    internal static class LegacyProperties
+    public static class LegacyProperties
     {
         public static readonly PROPERTYKEY Description =
             new PROPERTYKEY(new Guid("6A9EEB69-672C-4B73-B1F3-A6EF662CF3C2"), 100);

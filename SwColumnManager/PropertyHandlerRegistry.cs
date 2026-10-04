@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Microsoft.Win32;
 
 namespace SwColumnManager
@@ -18,15 +17,6 @@ namespace SwColumnManager
         private const string KeyPathTemplate =
             @"SOFTWARE\Microsoft\Windows\CurrentVersion\PropertySystem\PropertyHandlers\{0}";
 
-        public static string GetCurrentClsid(string extension)
-        {
-            string keyPath = string.Format(KeyPathTemplate, extension);
-            using (var key = Registry.LocalMachine.OpenSubKey(keyPath))
-            {
-                return key?.GetValue(null) as string;
-            }
-        }
-
         public static void SetClsid(string extension, string clsid)
         {
             string keyPath = string.Format(KeyPathTemplate, extension);
@@ -34,16 +24,6 @@ namespace SwColumnManager
             {
                 key.SetValue(null, clsid);
             }
-        }
-
-        public static Dictionary<string, string> GetCurrentClsids()
-        {
-            var result = new Dictionary<string, string>();
-            foreach (string ext in Extensions)
-            {
-                result[ext] = GetCurrentClsid(ext);
-            }
-            return result;
         }
     }
 }

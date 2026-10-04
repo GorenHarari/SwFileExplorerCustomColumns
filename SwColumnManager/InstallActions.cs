@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Web.Script.Serialization;
 
 namespace SwColumnManager
 {
@@ -36,12 +34,7 @@ namespace SwColumnManager
         private static readonly string SourceHandlerDllPath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory, HandlerDllName);
 
-        private static readonly string ConfigDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "SwFileExplorerCustomColumns");
-
-        private static readonly string FieldsPath = Path.Combine(ConfigDir, "fields.json");
-        private static readonly string SchemaPath = Path.Combine(ConfigDir, "SwFileExplorerCustomColumns.propdesc");
+        private static readonly string SchemaPath = Path.Combine(FieldsStore.ConfigDir, "SwFileExplorerCustomColumns.propdesc");
 
         public static void Apply(Action<string> log)
         {
@@ -75,7 +68,7 @@ namespace SwColumnManager
             LogProcessOutput(log, regResult);
 
             log("--- Step 3: generate and register the property schema ---");
-            var fields = LoadFields();
+            var fields = FieldsStore.Load();
             if (fields.Count == 0)
             {
                 log("No tracked fields in fields.json - schema will have zero custom entries (legacy/auto-matched properties are unaffected).");
@@ -176,18 +169,6 @@ namespace SwColumnManager
             {
                 log($"Could not delete leftover {LegacyInteropDllName}: {ex.Message}");
             }
-        }
-
-        private static Dictionary<string, int> LoadFields()
-        {
-            if (!File.Exists(FieldsPath))
-            {
-                return new Dictionary<string, int>();
-            }
-
-            string json = File.ReadAllText(FieldsPath);
-            var serializer = new JavaScriptSerializer();
-            return serializer.Deserialize<Dictionary<string, int>>(json);
         }
 
         private struct ProcessResult
