@@ -389,12 +389,17 @@ refactored handler is genuinely serving values: `SwSync.Material = '10B21'`,
     size, type, etc.) can't be used to test this behavior at all.
 
 ## Files in this folder
-- `List-ExplorerColumns.ps1` - no prerequisites. Dumps every named Explorer
-  detail column on this PC to `ExplorerColumns.csv`, for cross-referencing
-  candidate property names against the SW Custom tab. **Run** - found 325
-  named columns.
-- `ReadSwProperties/` (`Program.cs` + `ReadSwProperties.csproj` - **moved
-  into their own subfolder in session 5**, having sat at the repo root
+- `DevTestTools/List-ExplorerColumns.ps1` - **moved into `DevTestTools/`
+  in session 8**, along with every other dev/test tool below (see that
+  folder's own bullet further down) - path references elsewhere in this
+  file predating that move say just the bare filename. No prerequisites.
+  Dumps every named Explorer detail column on this PC to
+  `ExplorerColumns.csv` (written next to the script via `$PSScriptRoot`, so
+  the move needed no script change), for cross-referencing candidate
+  property names against the SW Custom tab. **Run** - found 325 named
+  columns.
+- `DevTestTools/ReadSwProperties/` (`Program.cs` + `ReadSwProperties.csproj`
+  - **moved into their own subfolder in session 5**, having sat at the repo root
   since the very first commit. That root placement turned out to be a real,
   reproducible bug once enough sibling projects existed: an SDK-style
   project with no subfolder globs `**/*.cs` from its own directory
@@ -424,9 +429,14 @@ refactored handler is genuinely serving values: `SwSync.Material = '10B21'`,
      found via reflection against the actual interop DLL.
   4. `Console.ReadKey()` at the end crashed when input was redirected
      (non-interactive runs); guarded with `Console.IsInputRedirected`.
-  Builds as x64 / net48 - SolidWorks 2020+ is 64-bit only.
-- `SwFilterDump/` - separate project (its own subfolder, so SDK-style file
-  globbing doesn't collide with `ReadSwProperties.csproj`). Drives
+  Builds as x64 / net48 - SolidWorks 2020+ is 64-bit only. **Moved again in
+  session 8** into `DevTestTools/` (see that bullet further down); its
+  `<Compile Include>` link to `SwPropertyHandler\LicenseKey.cs` updated
+  from `..\` to `..\..\` accordingly - confirmed still builds.
+- `DevTestTools/SwFilterDump/` - separate project (its own subfolder, so
+  SDK-style file globbing doesn't collide with `ReadSwProperties.csproj`).
+  **Moved into `DevTestTools/` in session 8** (no path fixes needed - no
+  relative references). Drives
   `sldsearchifilter.dll`'s `IFilter` COM interface directly (`Init`/
   `GetChunk`/`GetValue`), the same low-level mechanism the Windows Search
   crawler uses - shows exactly what the filter extracts, ground truth
@@ -488,8 +498,11 @@ refactored handler is genuinely serving values: `SwSync.Material = '10B21'`,
   verified** against the real test part; the broader risk-test matrix
   (fixtures, locked files, concurrency, performance) was run later and
   passed - see Phase 3 below.
-- `SwPropertyHandlerTest/` - throwaway-style console harness for
-  `SwPropertyHandler`, same pattern as `SwFilterDump`'s
+- `DevTestTools/SwPropertyHandlerTest/` - **moved into `DevTestTools/` in
+  session 8**; its `ProjectReference` to `SwPropertyHandler.csproj` updated
+  from `..\` to `..\..\` accordingly - rebuilt and re-run against a real
+  file after the move, identical output to before. Throwaway-style console
+  harness for `SwPropertyHandler`, same pattern as `SwFilterDump`'s
   `TestPropertyHandler`: forces genuine COM activation via
   `Type.GetTypeFromCLSID` + `Activator.CreateInstance` and exercises
   `IInitializeWithFile`/`IPropertyStore` directly, independent of Explorer.

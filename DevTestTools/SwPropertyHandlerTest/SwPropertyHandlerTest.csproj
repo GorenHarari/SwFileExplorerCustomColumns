@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SwPropertyHandler\SwPropertyHandler.csproj" />
+    <ProjectReference Include="..\..\SwPropertyHandler\SwPropertyHandler.csproj" />
   </ItemGroup>
 
 </Project>

@@ -274,27 +274,30 @@ tool could replace it correctly rather than guess.
 
 These aren't part of the shipped tool - they're what made building it
 possible, kept in the repo for future investigation or debugging rather
-than day-to-day use.
+than day-to-day use. All grouped under `DevTestTools/`.
 
-- **`List-ExplorerColumns.ps1`** - dumps every named Explorer column this
-  PC knows about to `ExplorerColumns.csv` (index + display name), via the
-  `Shell.Application` COM object. The simplest possible ground-truth check
-  for "does a column with this exact name exist."
-- **`ReadSwProperties/`** - a small console app reading a SolidWorks file's custom
-  properties directly via the Document Manager API, independent of
-  Explorer entirely. Compiles in the same `SwPropertyHandler\LicenseKey.cs`
-  as the handler. Used throughout to confirm
-  what a file's custom properties actually are, directly from the source.
-- **`SwFilterDump/`** - drives `sldsearchifilter.dll`'s `IFilter` COM
-  interface directly (the same low-level mechanism the Windows Search
-  crawler uses) to see exactly what SolidWorks's filter can extract, and
-  `TestPropertyHandler` mode drives the original `CSolidworkPropertyStore`
-  directly via `IInitializeWithFile`/`IPropertyStore` - this is how the
-  9-property cap and the resolved-vs-raw-formula distinction (e.g.
-  Material resolving to `10B21` instead of the raw linked-formula string)
-  were actually discovered, not guessed.
-- **`SwPropertyHandlerTest/`** - the equivalent harness for *our own*
-  `SwPropertyHandler`, forcing genuine COM activation
+- **`DevTestTools/List-ExplorerColumns.ps1`** - dumps every named Explorer
+  column this PC knows about to `ExplorerColumns.csv` (index + display
+  name, written next to the script), via the `Shell.Application` COM
+  object. The simplest possible ground-truth check for "does a column with
+  this exact name exist."
+- **`DevTestTools/ReadSwProperties/`** - a small console app reading a
+  SolidWorks file's custom properties directly via the Document Manager
+  API, independent of Explorer entirely. Compiles in the same
+  `SwPropertyHandler\LicenseKey.cs` as the handler. Used throughout to
+  confirm what a file's custom properties actually are, directly from the
+  source.
+- **`DevTestTools/SwFilterDump/`** - drives `sldsearchifilter.dll`'s
+  `IFilter` COM interface directly (the same low-level mechanism the
+  Windows Search crawler uses) to see exactly what SolidWorks's filter can
+  extract, and `TestPropertyHandler` mode drives the original
+  `CSolidworkPropertyStore` directly via `IInitializeWithFile`/
+  `IPropertyStore` - this is how the 9-property cap and the
+  resolved-vs-raw-formula distinction (e.g. Material resolving to `10B21`
+  instead of the raw linked-formula string) were actually discovered, not
+  guessed.
+- **`DevTestTools/SwPropertyHandlerTest/`** - the equivalent harness for
+  *our own* `SwPropertyHandler`, forcing genuine COM activation
   (`Type.GetTypeFromCLSID`) the same way Explorer does. Also has
   `--batch <folder>` and `--concurrent <folder>` modes used to verify
   performance and thread-safety across a real folder of SolidWorks files.
