@@ -162,6 +162,16 @@ with `--pause` (in PowerShell, from the exe's folder:
 `.\SwColumnManager.exe --pause`) - the console then waits for a key before
 closing.
 
+### Where everything ends up
+
+| What | Location |
+|---|---|
+| The property handler DLL | `%ProgramFiles%\SwFileExplorerCustomColumns\SwPropertyHandler.dll` - copied and registered (`regasm /codebase`) there by Apply, removed and unregistered by Uninstall. |
+| Your tracked field list | `%ProgramData%\SwFileExplorerCustomColumns\fields.json` - name -> PID, edited by the field list editor. Survives Uninstall (deleted by hand if you want a clean slate). |
+| The known-columns cache | `%ProgramData%\SwFileExplorerCustomColumns\knownColumns.json` - auto-refreshed every time the editor opens; used for auto-matching your custom properties against existing Explorer columns. Also survives Uninstall. |
+| The generated property schema | `%ProgramData%\SwFileExplorerCustomColumns\SwFileExplorerCustomColumns.propdesc` - registered/unregistered with Windows (`PSRegisterPropertySchema`) by Apply/Uninstall, and the file itself deleted by Uninstall. |
+| The SolidWorks Document Manager (`swdocumentmgr.dll`) | **If a SolidWorks install already registered one** (the common case - normally `C:\Program Files\Common Files\SOLIDWORKS Shared\swdocumentmgr.dll`): left exactly where it is, untouched by Apply or Uninstall. **If none was registered** (no SolidWorks on this machine): Apply copies the bundled copy to `%ProgramFiles%\SwFileExplorerCustomColumns\swdocumentmgr.dll` and registers it (`regsvr32`); Uninstall unregisters and removes it again, but only if this tool was the one that registered it. |
+
 ## How this tool works
 
 `SwColumnManager.exe` runs unprivileged by default
