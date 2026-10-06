@@ -89,6 +89,11 @@ copy of the test part (same resolved values as always - `Material = '10B21'`
 etc.) - all working through the real, deployed, registered path, not just
 the dev build.
 
+**Goren confirmed it fixed for real afterward**, going back to the actual
+original repro (edit/save a real part in SolidWorks with Explorer open, then
+rename/delete it) rather than just the synthetic tests above - no more
+lock.
+
 ## SW2019 work computer deployment (session 8) - done, tested
 Picked up the session-7 handoff (below, now resolved) on the work computer.
 **Machine-identity correction made during this session**: the work computer
