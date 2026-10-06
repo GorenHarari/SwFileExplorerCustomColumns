@@ -4,6 +4,91 @@
 Get SolidWorks (.sldprt / .sldasm / .slddrw) custom properties to show up as
 sortable/filterable columns in Windows Explorer.
 
+## Bug: explorer.exe held SolidWorks files locked, blocking rename/delete (session 9) - done, tested, deployed to the work computer
+Goren reported (on the work computer, where the handler has been live since
+session 8): after editing and saving a part in SolidWorks, Explorer sometimes
+wouldn't let him rename or delete it - "file is open in another program."
+Using Resource Monitor (CPU tab, Associated Handles, search the filename -
+the same technique already used in session 8 to find `SearchFilterHost.exe`)
+he confirmed `explorer.exe` itself held the handle, and specifically only on
+the file he'd just edited - every other file in the folder was fine. He
+didn't know what in Explorer's property-reading path would hold a file open
+like that, or why only that one file.
+
+**Root cause, found by reading `SwPropertyStore.cs`/`SwDmDocument.cs`
+directly, not guessed:** `Initialize` opened the file via SWDM and cached the
+open `ISwDMDocument23` handle (`_doc`) on the instance for its entire
+lifetime; the only code that ever closed it (`SwDmDocument.Dispose()` ->
+`CloseDoc()`) was called from `SwPropertyStore`'s finalizer
+(`~SwPropertyStore`) - nothing else, anywhere, ever called it.
+`IInitializeWithFile`/`IPropertyStore` have no "done, release the file"
+method - Explorer's only lifecycle control is COM `Release()`, which for a
+managed CCW only drops the CLR's last reference, making the object merely
+*eligible* for GC. The finalizer (and therefore the file's actual OS-level
+release) only runs whenever the CLR hosted inside `explorer.exe` happens to
+collect it - non-deterministic, and could take a long time in a long-lived,
+low-allocation host process.
+
+This also explains the "only the just-edited file" observation: opening the
+folder creates one such handle per visible file, and by the time Goren
+touched an *older* file again, `explorer.exe` had likely already run a GC
+in between and finalized it. Saving in SolidWorks fires a shell-change
+notification for that one item, making Explorer re-query it and create a
+**brand-new** `SwPropertyStore`/handle right around the time he tried to
+delete it - too young to have survived a GC cycle yet. Every file goes
+through the same race; it's just rarely noticed because most files aren't
+touched again within the same short window.
+
+**Fix** (`SwPropertyHandler/SwPropertyStore.cs`): resolve every property
+value once, eagerly, inside `Initialize` (in a `using` block around the
+`SwDmDocument`), then let the `using` block close the SWDM document
+synchronously before `Initialize` returns. `GetValue` is now a plain
+`Dictionary<PROPERTYKEY, object>` lookup against the already-resolved
+values - no SWDM calls, no cached document, nothing left for a finalizer to
+do, so the finalizer was removed entirely. This closes the race rather than
+narrowing it: the handle is never held open longer than the `Initialize`
+call itself, regardless of how long Explorer keeps the COM object alive
+afterward or how recently it was created.
+
+**Verification, without any GUI/Resource Monitor automation available in
+this environment** - two new dev-only modes added to
+`DevTestTools/SwPropertyHandlerTest`:
+- `--rename-test <file>`: drives `SwPropertyStore` directly (non-COM, so it
+  always exercises the just-built code) through
+  `Initialize`/`GetCount`/`GetAt`/every `GetValue`, then - same process, no
+  `Dispose`, no forced GC - immediately attempts `File.Move` on the same
+  path. **Proved the bug first**: stashed the fix, rebuilt, ran this against
+  a scratch copy of a real fixture file - failed with
+  `IOException: ... being used by another process`, reproducing Goren's
+  exact symptom with no SolidWorks or Explorer involved. Restored the fix,
+  rebuilt, re-ran - rename succeeded immediately. This is strictly stronger
+  proof than the live GC-dependent race the original bug report hit, since
+  it doesn't rely on timing to surface.
+- `--batch-direct <folder>`: same as the existing `--batch` but via direct
+  (non-COM) instantiation, so it tests the just-built code independent of
+  what's currently registered/deployed. Run against all 24 real fixture
+  files in `C:\Users\GorenHarari\Desktop\TEST\` on the work computer: 303 ms
+  total, 12 ms/file average, zero failures, identical resolved values to
+  before the fix - matches session 8's `--batch` baseline (272 ms, 11 ms/
+  file) closely enough to call it noise, confirming the eager-resolution
+  change (resolving every property up front instead of only the ones
+  Explorer happens to ask for) doesn't meaningfully change the per-file
+  cost, which is dominated by the SWDM open itself either way.
+
+**Deployed for real on the work computer** (confirmed before starting: this
+*is* the work computer, `GorenH-laptop`, SW2019 only, with the handler
+already live from session 8 - not a separate test machine). Rebuilt
+`SwColumnManager` with the fixed handler bundled, ran its elevated Apply
+(`SwColumnManager.exe --apply --pause`, via `Start-Process -Verb RunAs` -
+Goren approved the UAC prompt) - succeeded, confirmed via the registry
+(`PropertyHandlers\.sldprt` still our CLSID, `InprocServer32`'s `CodeBase`
+pointing at the freshly-written
+`C:\Program Files\SwFileExplorerCustomColumns\SwPropertyHandler.dll`, new
+timestamp) and a live COM-activation property read against a fresh scratch
+copy of the test part (same resolved values as always - `Material = '10B21'`
+etc.) - all working through the real, deployed, registered path, not just
+the dev build.
+
 ## SW2019 work computer deployment (session 8) - done, tested
 Picked up the session-7 handoff (below, now resolved) on the work computer.
 **Machine-identity correction made during this session**: the work computer

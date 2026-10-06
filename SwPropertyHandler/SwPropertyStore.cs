@@ -1,15 +1,20 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace SwPropertyHandler
 {
-    // Real implementation (see CLAUDE.md, Phase 3/4). Initialize opens the
-    // SWDM document once and reads fields.json once, both cached for the
-    // lifetime of this instance - GetCount/GetAt/GetValue then just reuse
-    // that instead of re-opening the file or re-reading the config on every
-    // call.
+    // Real implementation (see CLAUDE.md, Phase 3/4). Initialize reads
+    // fields.json, opens the SWDM document just long enough to resolve every
+    // property value up front, then closes it before Initialize returns -
+    // GetCount/GetAt/GetValue serve only the already-resolved values, with
+    // no SWDM document kept open for the rest of this instance's lifetime.
+    // This is deliberate: IInitializeWithFile/IPropertyStore have no "done,
+    // release the file" method, so a document cached on the instance would
+    // only ever close via this class's GC finalization - non-deterministic
+    // inside a long-lived host like explorer.exe, which is exactly what let
+    // the underlying SolidWorks file stay locked (blocking rename/delete)
+    // for an unpredictable time after being browsed.
     //
     // Three sources of properties are served, in this priority order:
     //   1. LegacyProperties - 8 fixed PROPERTYKEYs, always present,
@@ -66,13 +71,56 @@ namespace SwPropertyHandler
         // Computed per-instance from this file's actual custom properties.
         private List<KeyValuePair<string, PROPERTYKEY>> _autoMatched = new List<KeyValuePair<string, PROPERTYKEY>>();
 
-        private SwDmDocument _doc;
+        // Every property value this instance can serve, resolved once during
+        // Initialize while the SWDM document is open - GetValue only ever
+        // reads from here afterward.
+        private Dictionary<PROPERTYKEY, object> _resolvedValues = new Dictionary<PROPERTYKEY, object>(new PropertyKeyComparer());
 
         public void Initialize(string pszFilePath, uint grfMode)
         {
             _fields = HandlerConfig.LoadFields();
-            _doc = SwDmDocument.TryOpen(pszFilePath);
-            _autoMatched = AutoMatcher.ComputeAutoMatches(_doc, _fields);
+            _resolvedValues = new Dictionary<PROPERTYKEY, object>(new PropertyKeyComparer());
+
+            using (SwDmDocument doc = SwDmDocument.TryOpen(pszFilePath))
+            {
+                _autoMatched = AutoMatcher.ComputeAutoMatches(doc, _fields);
+                if (doc == null)
+                {
+                    return;
+                }
+
+                foreach (var resolver in LegacyValueResolvers)
+                {
+                    TryResolve(_resolvedValues, resolver.Key, () => resolver.Value(doc));
+                }
+
+                foreach (var field in _fields)
+                {
+                    var key = new PROPERTYKEY(SchemaFormatId, (uint)field.Value);
+                    TryResolve(_resolvedValues, key, () => doc.GetCustomProperty(field.Key));
+                }
+
+                foreach (var auto in _autoMatched)
+                {
+                    PROPERTYKEY key = auto.Value;
+                    TryResolve(_resolvedValues, key, () => doc.GetCustomProperty(auto.Key));
+                }
+            }
+        }
+
+        // Resolves one property's value - any SWDM failure (property
+        // missing on this file, or any other error) just leaves that one
+        // key unresolved (GetValue then reports blank) rather than aborting
+        // the rest.
+        private static void TryResolve(Dictionary<PROPERTYKEY, object> values, PROPERTYKEY key, Func<object> resolve)
+        {
+            try
+            {
+                values[key] = resolve();
+            }
+            catch
+            {
+            }
         }
 
         public void GetCount(out uint cProps)
@@ -106,43 +154,7 @@ namespace SwPropertyHandler
 
         public void GetValue(ref PROPERTYKEY key, out object pv)
         {
-            pv = null;
-
-            if (_doc == null)
-            {
-                return;
-            }
-
-            try
-            {
-                if (LegacyValueResolvers.TryGetValue(key, out var resolve))
-                {
-                    pv = resolve(_doc);
-                }
-                else if (key.fmtid == SchemaFormatId)
-                {
-                    uint pid = key.pid;
-                    string name = _fields.FirstOrDefault(f => f.Value == pid).Key;
-                    if (name != null)
-                    {
-                        pv = _doc.GetCustomProperty(name);
-                    }
-                }
-                else
-                {
-                    PROPERTYKEY keyCopy = key;
-                    string autoName = _autoMatched.FirstOrDefault(a => LegacyProperties.KeyEquals(a.Value, keyCopy)).Key;
-                    if (autoName != null)
-                    {
-                        pv = _doc.GetCustomProperty(autoName);
-                    }
-                }
-            }
-            catch
-            {
-                // Property missing on this file, or any SWDM failure - blank, not a crash.
-                pv = null;
-            }
+            pv = _resolvedValues.TryGetValue(key, out var value) ? value : null;
         }
 
         public void SetValue(ref PROPERTYKEY key, ref object pv)
@@ -152,18 +164,6 @@ namespace SwPropertyHandler
 
         public void Commit()
         {
-        }
-
-        ~SwPropertyStore()
-        {
-            try
-            {
-                _doc?.Dispose();
-            }
-            catch
-            {
-                // Best-effort cleanup only - never throw from a finalizer.
-            }
         }
     }
 }
