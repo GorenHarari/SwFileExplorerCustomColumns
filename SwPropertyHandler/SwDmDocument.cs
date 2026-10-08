@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using SolidWorks.Interop.swdocumentmgr;
 
 namespace SwPropertyHandler
@@ -10,17 +11,29 @@ namespace SwPropertyHandler
     // document, reading its Summary-tab fields and custom properties.
     // Everything else (SwPropertyStore, AutoMatcher) works against this
     // plain C#-typed surface instead of touching SWDM types directly.
+    //
+    // All three SWDM COM objects this class touches (classFactory, app,
+    // _doc) are held as fields and explicitly released in Dispose, rather
+    // than left for the CLR's GC/finalizer to reclaim whenever it next runs
+    // inside the long-lived explorer.exe/SearchFilterHost.exe host process.
     internal sealed class SwDmDocument : IDisposable
     {
+        private readonly SwDMClassFactory _classFactory;
+        private readonly ISwDMApplication _app;
         private readonly ISwDMDocument23 _doc;
 
-        private SwDmDocument(ISwDMDocument23 doc)
+        private SwDmDocument(SwDMClassFactory classFactory, ISwDMApplication app, ISwDMDocument23 doc)
         {
+            _classFactory = classFactory;
+            _app = app;
             _doc = doc;
         }
 
         public static SwDmDocument TryOpen(string filePath)
         {
+            SwDMClassFactory classFactory = null;
+            ISwDMApplication app = null;
+            ISwDMDocument doc = null;
             try
             {
                 SwDmDocumentType docType;
@@ -40,21 +53,62 @@ namespace SwPropertyHandler
                         return null;
                 }
 
-                var classFactory = (SwDMClassFactory)Activator.CreateInstance(
+                classFactory = (SwDMClassFactory)Activator.CreateInstance(
                     Type.GetTypeFromProgID("SwDocumentMgr.SwDMClassFactory"));
 
-                ISwDMApplication app = classFactory.GetApplication(LicenseKey.Value);
+                app = classFactory.GetApplication(LicenseKey.Value);
                 if (app == null)
                 {
+                    ReleaseQuiet(classFactory);
                     return null;
                 }
 
-                ISwDMDocument doc = app.GetDocument(filePath, docType, true, out SwDmDocumentOpenError _);
-                return doc is ISwDMDocument23 doc23 ? new SwDmDocument(doc23) : null;
+                doc = app.GetDocument(filePath, docType, true, out SwDmDocumentOpenError _);
+                if (doc is ISwDMDocument23 doc23)
+                {
+                    return new SwDmDocument(classFactory, app, doc23);
+                }
+
+                // Opened natively but isn't the interface we need - still
+                // close/release it instead of leaving the file locked.
+                CloseQuiet(doc);
+                ReleaseQuiet(doc);
+                ReleaseQuiet(app);
+                ReleaseQuiet(classFactory);
+                return null;
             }
             catch
             {
+                CloseQuiet(doc);
+                ReleaseQuiet(doc);
+                ReleaseQuiet(app);
+                ReleaseQuiet(classFactory);
                 return null;
+            }
+        }
+
+        private static void CloseQuiet(ISwDMDocument doc)
+        {
+            try
+            {
+                doc?.CloseDoc();
+            }
+            catch
+            {
+            }
+        }
+
+        private static void ReleaseQuiet(object comObject)
+        {
+            try
+            {
+                if (comObject != null && Marshal.IsComObject(comObject))
+                {
+                    Marshal.ReleaseComObject(comObject);
+                }
+            }
+            catch
+            {
             }
         }
 
@@ -93,15 +147,14 @@ namespace SwPropertyHandler
 
         public void Dispose()
         {
-            try
-            {
-                _doc?.CloseDoc();
-            }
-            catch
-            {
-                // Best-effort cleanup only - a disposal failure here must
-                // never propagate into explorer.exe.
-            }
+            // Best-effort only, and each release attempted independently -
+            // a disposal failure here must never propagate into
+            // explorer.exe, and one failed release must not block the
+            // others.
+            CloseQuiet(_doc);
+            ReleaseQuiet(_doc);
+            ReleaseQuiet(_app);
+            ReleaseQuiet(_classFactory);
         }
     }
 }

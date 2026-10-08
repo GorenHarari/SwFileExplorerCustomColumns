@@ -66,6 +66,53 @@ namespace SwColumnManager
             // this never explicitly starts a new one itself, which would
             // launch an elevated Explorer instead.
             Kill("explorer");
+
+            // Confirm the automatic relaunch actually happened rather than
+            // silently assuming it did - if Explorer auto-restart is
+            // disabled (e.g. by Group Policy) or just slow, the user would
+            // otherwise be left with no desktop/taskbar and no indication
+            // why.
+            if (!WaitForProcess("explorer", TimeSpan.FromSeconds(5)))
+            {
+                log("WARNING: explorer.exe did not relaunch automatically after being closed. " +
+                    "If the desktop/taskbar is missing, start it manually (Task Manager -> " +
+                    "File -> Run new task -> explorer.exe).");
+            }
+        }
+
+        private static bool WaitForProcess(string processName, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (true)
+            {
+                if (IsRunning(processName))
+                {
+                    return true;
+                }
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(200);
+            }
+        }
+
+        private static bool IsRunning(string processName)
+        {
+            var processes = Process.GetProcessesByName(processName);
+            try
+            {
+                return processes.Length > 0;
+            }
+            finally
+            {
+                foreach (var process in processes)
+                {
+                    process.Dispose();
+                }
+            }
         }
 
         private static void Kill(string processName)

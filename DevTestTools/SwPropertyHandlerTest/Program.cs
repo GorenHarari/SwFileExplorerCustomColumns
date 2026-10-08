@@ -34,6 +34,16 @@ class Program
             return;
         }
 
+        if (args.Length > 0 && args[0].Equals("--handle-loop", StringComparison.OrdinalIgnoreCase))
+        {
+            int iterations = args.Length > 2 ? int.Parse(args[2]) : 200;
+            RunHandleLoop(args[1], iterations);
+            return;
+        }
+
+
+
+
         string filePath = args.Length > 0
             ? args[0]
             : @"C:\Users\Goren Harari\source\repos\SwFileExplorerCustomColumns\220-320612 WalkAir_WheelAxle.SLDPRT";
@@ -226,6 +236,53 @@ class Program
         {
             Console.WriteLine($"FAIL: rename failed - file still locked: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    // Repeatedly drives the just-built SwPropertyStore directly (non-COM,
+    // same reasoning as RunBatchDirect - always exercises the just-built
+    // code, and avoids needing our CLSID freshly re-registered/elevated)
+    // against ONE file, and reports the current process's OS handle count
+    // every 20 iterations, with no explicit GC forced in between. This is
+    // the concrete signal for the SwDmDocument COM-release fix: before the
+    // fix, classFactory/app/_doc RCWs are left for the GC/finalizer, so
+    // handle count should climb across iterations and only drop after a GC;
+    // after the fix, each iteration releases its own COM objects
+    // deterministically in Dispose, so handle count should stay flat.
+    static void RunHandleLoop(string filePath, int iterations)
+    {
+        var proc = Process.GetCurrentProcess();
+
+        Console.WriteLine($"Repeating Initialize/GetValue against '{Path.GetFileName(filePath)}' {iterations} times, no forced GC.");
+        Console.WriteLine($"  [start] handles = {proc.HandleCount}");
+
+        for (int i = 1; i <= iterations; i++)
+        {
+            var store = new SwPropertyStore();
+            var iwf = (IInitializeWithFile)store;
+            var ps = (IPropertyStore)store;
+
+            iwf.Initialize(filePath, 0);
+            ps.GetCount(out uint count);
+            for (uint p = 0; p < count; p++)
+            {
+                ps.GetAt(p, out PROPERTYKEY pkey);
+                ps.GetValue(ref pkey, out object _);
+            }
+
+            if (i % 20 == 0 || i == iterations)
+            {
+                proc.Refresh();
+                Console.WriteLine($"  [{i,4}] handles = {proc.HandleCount}");
+            }
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        proc.Refresh();
+        Console.WriteLine($"  [after forced GC] handles = {proc.HandleCount}");
+
+        Console.WriteLine("Done.");
     }
 
     // Multiple threads, each creating and driving its own COM object against

@@ -4,6 +4,142 @@
 Get SolidWorks (.sldprt / .sldasm / .slddrw) custom properties to show up as
 sortable/filterable columns in Windows Explorer.
 
+## Investigation: explorer.exe perf/reliability (session 10) - 3 real fixes done, tested; 1 root cause found but not fixable by us
+Goren had no specific repro, just a general impression that explorer.exe
+sometimes crashes/freezes and that SolidWorks-related handles might
+accumulate over time. Explored `SwPropertyHandler`'s COM lifecycle and
+`SwColumnManager`'s process-recovery code for concrete bugs, found and fixed
+three, then measured for a leak directly (OS handle count, not just code
+review) and found a fourth, bigger one that we cannot fix.
+
+**Fixed (all three independently real, all verified via `--batch`/
+`--concurrent`/`--rename-test`, zero regressions):**
+1. `SwDmDocument.cs` - `classFactory`/`app`/`_doc` COM objects were never
+   explicitly released (`Marshal.ReleaseComObject`), only `_doc.CloseDoc()`
+   was called - left for the GC/finalizer to reclaim inside the long-lived
+   explorer.exe/SearchFilterHost.exe host. Also: if `app.GetDocument()`
+   returns a document that doesn't cast to `ISwDMDocument23`, the opened
+   document was dropped with no `CloseDoc()` at all - the same bug class as
+   session 9's fix, in an untested path. Fixed: all three objects are now
+   explicit fields, released in `Dispose()`, each independently
+   best-effort (one failed release doesn't block the others); the
+   cast-miss path now closes/releases before returning `null`.
+2. `HandlerConfig.cs` - `fields.json`/`knownColumns.json` were read from disk
+   and JSON-deserialized on every single `Initialize` call (i.e. per file
+   Explorer activates a property store for). Fixed: both are now cached in
+   memory, keyed by last-write-time/existence, re-read only when the file
+   actually changes - confirmed via a live test (edited the real
+   `fields.json`, confirmed the new field appeared without a process
+   restart, then restored the original file exactly).
+3. `ExplorerUtil.cs` - `RetryOnLock` kills every `explorer.exe` process and
+   assumes Windows auto-relaunches it, with no verification. Fixed: after
+   the kill, waits up to 5s and logs a clear warning if explorer.exe didn't
+   come back, instead of assuming it did. Tested live on this machine: held
+   the handler DLL locked with a synthetic exclusive-read lock, ran a real
+   elevated Apply - confirmed `explorer.exe` was genuinely killed and
+   relaunched correctly (no false warning), and that exhausting all 4
+   retries (since killing explorer/SearchFilterHost doesn't release a lock
+   *we* synthetically held) fails cleanly (exit code 1, no crash/hang) rather
+   than leaving anything stuck. A second live Apply after the lock cleared
+   confirmed the normal success path still works and left the installed
+   handler fully functional (confirmed via live `ExtendedProperty` reads:
+   `Material = '10B21'`, `Description = 'WalkAir_WheelAxle'`).
+
+**Found, NOT fixable from our code: a real OS-handle leak inside
+SolidWorks' own Document Manager (SWDM) native library.** Proved this by
+direct measurement (OS handle count via `Process.HandleCount`), not just
+code review - bisected which calls leak by looping each in isolation
+against a reused `Application`/document:
+- Looping raw `Application`/`Document` open-close cycles, or `GetVersion()`
+  alone: **flat**, no growth at all.
+- Looping *any* of: `Title`/`Subject`/`Author`/`Keywords`/`Comments`,
+  `GetFileAvgTime()`, `GetCustomPropertyValues()`, or
+  `GetCustomPropertyNames()` - each one **alone** leaks ~6 OS handles per
+  call, climbing linearly, indefinitely.
+- A forced `GC.Collect()` + `WaitForPendingFinalizers()` after 200 leaking
+  iterations recovered **zero** handles - ruling out this being any kind of
+  .NET/RCW finalizer-timing issue (which is exactly what fix #1 above
+  addresses). The leak is native and immediate, not GC-deferred, so no
+  amount of `Marshal.ReleaseComObject` correctness on our side touches it.
+
+Since reading custom properties/summary-info is the entire purpose of this
+handler, every file Explorer shows (that this handler reads properties from)
+leaks a handful of OS handles inside SolidWorks' own DLL, accumulating for
+the lifetime of whatever process hosts the handler (explorer.exe or
+SearchFilterHost.exe) until that process restarts. This is a strong, now
+directly-measured explanation for "things degrade/freeze the longer Explorer
+has been browsing SolidWorks files" - and it is outside our ability to fix,
+short of SolidWorks fixing it in a future SWDM release.
+
+**What's actually leaking, by type** - went further than the handle *count*:
+wrote a throwaway diagnostic (`NtQuerySystemInformation`/`NtQueryObject`, the
+same technique Process Explorer/`handle.exe` use internally, removed again
+after use) that snapshots this process's own handle table before/after 30
+calls to the leaky `summary` accessor (`Title`/`Subject`/`Author`/`Keywords`/
+`Comments`), diffs it, and resolves each new handle's type and name. Result
+(348 new, never-closed handles for 30 calls - ~11-12/call, same ballpark as
+the earlier ~6/call measurement, consistent, not one single resource type):
+`Semaphore` (134), `EtwRegistration` (73, a tracing-provider registration),
+`Event` (87), `Key`/registry (24 - named examples:
+`\REGISTRY\...\Classes`, `\REGISTRY\MACHINE\SOFTWARE\Classes\PackagedCom\
+ProgIdIndex`), `ALPC Port` (9 - `\RPC Control\OLE...`), `File` (8 - two
+`\Device\KsecDD`, the crypto device, plus a few `.dll.mui` resource files),
+`Section` (5 - `\BaseNamedObjects\__ComCatalogCache__`), `Thread` (4),
+`Mutant` (2), `Timer`/`IoCompletion` (1 each).
+
+**Working hypothesis for the mechanism (speculation, no source access -
+not confirmed, but consistent with every measurement so far):** the named
+examples (`PackagedCom\ProgIdIndex`, `__ComCatalogCache__`, `RPC Control\
+OLE...`) are all classic **COM activation machinery** - the registry
+class-lookup, catalog cache, and RPC channel Windows sets up on a fresh
+`CoCreateInstance`. Combined with the fact that `GetVersion()` (pure
+file-header metadata, no property-set access) leaks nothing at all, while
+*every* property-content accessor leaks the same rough amount regardless of
+which field or how many fields are read in that one call, the likely
+mechanism is: each property-content call reopens/re-parses the file's
+property-set storage from scratch (itself a COM-based subsystem) and never
+closes it, rather than caching it once per `Document` open. The
+`EtwRegistration`/crypto-device (`KsecDD`) handles suggest this might be
+bundled with a license re-validation that also re-runs per call instead of
+once per `Application`. Almost certainly not a deliberate design choice (a
+real cache would plateau after first use, not grow linearly forever) -
+more likely SWDM was built/tested against SolidWorks's own GUI process,
+which opens relatively few documents per session and eventually exits
+(letting the OS reclaim everything regardless of what SolidWorks' own
+cleanup code does), not against a usage pattern like a Windows property
+handler: thousands of calls in a row, inside a host process that never
+exits on its own.
+
+**What this means for this tool and Goren's day-to-day experience:**
+the three fixes above are real and worth having, but they do not resolve
+the originally-reported symptom (explorer.exe degrading/freezing over
+time) - that symptom is dominated by this separate mechanism, which no
+code change on our side (short of not reading properties at all) can
+touch. Where it actually bites:
+- **Regular Explorer windows, Details view, with our columns visible** -
+  the dangerous path. Each file shown leaks directly into the actual
+  `explorer.exe` process, which does not self-recycle - handles accumulate
+  for as long as that process has been running (normally since the last
+  reboot), growing further every time a SolidWorks-heavy folder is
+  browsed, refreshed, or revisited.
+- **Windows Search indexing** - runs inside the disposable
+  `SearchFilterHost.exe` surrogate instead, which Windows itself recycles
+  on an idle timeout, capping the damage from that path for free.
+- The tool remains functionally correct (right values, no correctness
+  bugs here) - this is purely a "things slow down the longer explorer.exe
+  has been alive and the more SolidWorks files it has shown columns for"
+  concern.
+- The only real lever available is restarting `explorer.exe` occasionally
+  (Task Manager) to zero out whatever accumulated - a workaround, not a
+  fix. Enabling our columns as always-visible defaults across all folders
+  (rather than only where SolidWorks files are actually being worked on)
+  would widen exposure, since every folder browse anywhere would start
+  leaking, not just the ones actually being looked at for SolidWorks data.
+
+Not investigated further this session (e.g. whether a different SWDM DLL
+version avoids it, or reporting it to SolidWorks as a Document Manager API
+bug) - Goren's call, deferred rather than pursued.
+
 ## Bug: explorer.exe held SolidWorks files locked, blocking rename/delete (session 9) - done, tested, deployed to the work computer
 Goren reported (on the work computer, where the handler has been live since
 session 8): after editing and saving a part in SolidWorks, Explorer sometimes
